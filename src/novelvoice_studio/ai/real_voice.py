@@ -48,7 +48,7 @@ class QwenVoiceDesignProvider(VoiceDesignProvider):
         return ProviderHealth(
             ok=bool(payload.get("ok", True)),
             detail=(
-                f"Qwen Worker 已连接；模型{'已加载' if loaded else '尚未加载（首次生成时加载）'}"
+                f"Qwen 引擎服务已连接；模型{'已加载' if loaded else '尚未加载（首次生成时加载）'}"
             ),
             meta={key: payload.get(key) for key in ("model_id", "model_dir", "load_seconds")},
         )
@@ -128,7 +128,7 @@ class QwenCosyVoiceTTSProvider(TTSProvider):
             return ProviderHealth(ok=False, detail="；".join(problems), meta=meta)
         return ProviderHealth(
             ok=True,
-            detail="Qwen VoiceDesign 与 CosyVoice3 Worker 均已连接",
+            detail="Qwen VoiceDesign 与 CosyVoice3 引擎服务均已连接",
             meta=meta,
         )
 

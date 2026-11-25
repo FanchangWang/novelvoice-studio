@@ -75,7 +75,7 @@ def test_registry_mock_summary() -> None:
 
 
 def test_registry_real_mode_uses_local_providers() -> None:
-    """阶段 3：real 模式使用本机 Ollama 与两个回环语音 Worker。"""
+    """阶段 3：real 模式使用本机 Ollama 与两个回环语音引擎服务。"""
     registry = ProviderRegistry(Settings(providers=ProvidersConfig(mode="real")))
     assert registry.mode == "real"
     assert isinstance(registry.llm, OllamaLLMProvider)

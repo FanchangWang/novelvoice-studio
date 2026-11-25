@@ -5,7 +5,7 @@
   2. 模型已通过 scripts/download_models.ps1 下载到 ModelScope 缓存目录
 
 用法（在仓库根目录）：
-  workers/qwen_tts_worker/.venv/Scripts/python.exe workers/qwen_tts_worker/voice_design_poc.py
+  workers/qwen_tts_worker/.venv/Scripts/python.exe workers/experiments/qwen_tts_worker/voice_design_poc.py
 
 输出：
   %USERPROFILE%\\Documents\\NovelVoiceStudio\\poc_output\\voices\\

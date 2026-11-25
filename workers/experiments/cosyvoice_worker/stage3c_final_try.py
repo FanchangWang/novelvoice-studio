@@ -23,6 +23,11 @@ import numpy as np
 import soundfile as sf
 
 from stage3_ab import DEFAULT_MODEL_DIR, DEFAULT_SOURCE_DIR, audio_stats, sha256_file
+
+# stage3c_deess.py 仍是生产依赖，留在 cosyvoice_worker/。
+RUNTIME_WORKER_DIR = Path(__file__).resolve().parents[2] / "cosyvoice_worker"
+if str(RUNTIME_WORKER_DIR) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_WORKER_DIR))
 from stage3c_deess import deess, read_mono, sibilant_shorten, spectral_stats
 
 STAGE3C = Path.home() / "Documents" / "NovelVoiceStudio" / "cache" / "poc_output" / "stage3c"

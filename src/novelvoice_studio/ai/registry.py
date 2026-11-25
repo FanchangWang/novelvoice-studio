@@ -1,8 +1,8 @@
 """Provider 注册表。
 
 mock 模式：全部使用确定性 Mock，不加载模型。
-real 模式：LLM 接本机 Ollama；VoiceDesign / TTS 接本机 HTTP Worker。
-Worker 未启动时应用仍可启动，语音相关接口会返回 503 与启动提示。
+real 模式：LLM 接本机 Ollama；VoiceDesign / TTS 接本机 HTTP 引擎服务。
+引擎服务未启动时应用仍可启动，语音相关接口会返回 503 与启动提示。
 """
 
 from __future__ import annotations

@@ -2,8 +2,8 @@
 
 只读取 stage3 目录中的 candidates.json / records.json 和 wav，不修改音频。
 用法：
-  uv run python workers/stage3_audition.py
-  uv run python workers/stage3_audition.py --stage3-dir <数据目录>/cache/poc_output/stage3
+  uv run python workers/experiments/stage3_audition.py
+  uv run python workers/experiments/stage3_audition.py --stage3-dir <数据目录>/cache/poc_output/stage3
 """
 
 from __future__ import annotations

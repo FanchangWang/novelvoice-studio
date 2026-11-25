@@ -5,7 +5,7 @@
   -> 对新台词做 zero-shot，检查语速、音色相似度与句尾指标。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3b_qwen_anchor_test.py
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3b_qwen_anchor_test.py
 """
 
 from __future__ import annotations

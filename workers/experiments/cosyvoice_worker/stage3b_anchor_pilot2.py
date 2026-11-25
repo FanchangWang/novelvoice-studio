@@ -6,7 +6,7 @@
   - 中性 zero-shot 按句生成对照。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3b_anchor_pilot2.py
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3b_anchor_pilot2.py
 """
 
 from __future__ import annotations

@@ -8,8 +8,8 @@
   - 输出到 stage3b，不覆盖阶段 3。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3b_run.py --group selected_core
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3b_run.py --group all --fp16
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3b_run.py --group selected_core
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3b_run.py --group all --fp16
 """
 
 from __future__ import annotations

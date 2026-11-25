@@ -1,0 +1,48 @@
+# NovelVoice Studio 引擎服务目录。
+#
+# 这里登记的是“生产入口”，不是实验脚本。每个服务都是独立 uv project，
+# 拥有自己的 Python/venv/模型依赖；应用只通过回环 HTTP 调用，不导入其代码。
+#
+# 端口与模型 ID 不在此重复：控制器从 config/config.yaml 的 config_url /
+# config_model 指向的字段读取，确保应用和引擎服务使用同一份配置。
+version: 1
+
+services:
+  - id: qwen_tts
+    label: "Qwen3-TTS VoiceDesign"
+    description: "按人物描述与演绎指令生成情感源音频；随后交给 CosyVoice VC 固定角色音色。"
+    project: "qwen_tts_worker"
+    entrypoint: "server.py"
+    config_url: "voice_design.worker_url"
+    config_model: "voice_design.model_id"
+    health_worker: "qwen3_tts_voice_design"
+    capabilities:
+      - "中文声音设计"
+      - "自然语言音色描述"
+      - "情绪与演绎指令"
+      - "固定 seed 复现"
+    endpoints:
+      - "GET /health"
+      - "POST /v1/generate"
+      - "POST /v1/unload"
+      - "POST /v1/shutdown"
+
+  - id: cosyvoice
+    label: "CosyVoice3 Voice Conversion"
+    description: "把情感源音频转换到固定参考音色，并提供参考音去齿 DSP。"
+    project: "cosyvoice_worker"
+    entrypoint: "server.py"
+    config_url: "tts.worker_url"
+    config_model: "tts.model_id"
+    health_worker: "cosyvoice3_vc"
+    capabilities:
+      - "中文语音合成/音色转换"
+      - "固定参考音色"
+      - "语速与 seed 控制"
+      - "参考音去齿"
+    endpoints:
+      - "GET /health"
+      - "POST /v1/vc"
+      - "POST /v1/deess"
+      - "POST /v1/unload"
+      - "POST /v1/shutdown"

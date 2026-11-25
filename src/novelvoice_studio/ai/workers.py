@@ -1,6 +1,6 @@
-"""本机语音 Worker 的 HTTP 客户端。
+"""本机语音引擎服务的 HTTP 客户端。
 
-Worker 必须运行在回环地址；这里不做任何模型加载或文件路径参数传递，
+引擎服务必须运行在回环地址；这里不做任何模型加载或文件路径参数传递，
 音频只通过请求体传输，避免后端成为任意文件读取通道。
 """
 
@@ -15,18 +15,18 @@ import httpx
 from novelvoice_studio.ai.base import AudioResult
 from novelvoice_studio.core.errors import DependencyUnavailableError
 
-WORKER_HINT = "请先启动语音 Worker（scripts/start_workers.ps1）并确认模型目录已就绪。"
+WORKER_HINT = "请先启动语音引擎服务（uv run novelvoice-studio worker start）并确认模型目录已就绪。"
 
 
 class WorkerClient:
-    label = "语音 Worker"
+    label = "语音引擎服务"
 
     def __init__(self, base_url: str, timeout_seconds: float) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
 
     def _client(self) -> httpx.Client:
-        # 本机 Worker 不经过系统代理（ALL_PROXY 等在 Windows 上经常为空值）。
+        # 本机引擎服务不经过系统代理（ALL_PROXY 等在 Windows 上经常为空值）。
         return httpx.Client(
             base_url=self.base_url,
             timeout=httpx.Timeout(self.timeout_seconds, connect=3.0),
@@ -80,7 +80,7 @@ class WorkerClient:
         try:
             payload = response.json()
         except ValueError:
-            payload = {"ok": False, "detail": "Worker 返回了非 JSON 健康信息"}
+            payload = {"ok": False, "detail": "引擎服务返回了非 JSON 健康信息"}
         return payload if isinstance(payload, dict) else {"ok": False}
 
     def unload(self) -> dict[str, Any]:
@@ -93,7 +93,7 @@ class WorkerClient:
 
 
 class QwenWorkerClient(WorkerClient):
-    label = "Qwen3-TTS VoiceDesign Worker"
+    label = "Qwen3-TTS VoiceDesign 引擎服务"
 
     def generate(
         self,
@@ -110,7 +110,7 @@ class QwenWorkerClient(WorkerClient):
         )
         content = response.content
         if not content or content[:4] != b"RIFF":
-            raise self._error("Qwen Worker 返回的不是 WAV 音频", status_code=response.status_code)
+            raise self._error("Qwen 引擎服务返回的不是 WAV 音频", status_code=response.status_code)
         return AudioResult(
             audio_bytes=content,
             sample_rate=int(response.headers.get("X-NVS-Sample-Rate") or 0),
@@ -130,7 +130,7 @@ class QwenWorkerClient(WorkerClient):
 
 
 class CosyVoiceWorkerClient(WorkerClient):
-    label = "CosyVoice3 Worker"
+    label = "CosyVoice3 引擎服务"
 
     def vc(
         self,
@@ -152,7 +152,7 @@ class CosyVoiceWorkerClient(WorkerClient):
         )
         content = response.content
         if not content or content[:4] != b"RIFF":
-            raise self._error("CosyVoice Worker 返回的不是 WAV 音频", status_code=response.status_code)
+            raise self._error("CosyVoice 引擎服务返回的不是 WAV 音频", status_code=response.status_code)
         return AudioResult(
             audio_bytes=content,
             sample_rate=int(response.headers.get("X-NVS-Sample-Rate") or 0),
@@ -194,7 +194,7 @@ class CosyVoiceWorkerClient(WorkerClient):
         )
         content = response.content
         if not content or content[:4] != b"RIFF":
-            raise self._error("CosyVoice Worker 返回的不是 WAV 音频", status_code=response.status_code)
+            raise self._error("CosyVoice 引擎服务返回的不是 WAV 音频", status_code=response.status_code)
         stats: dict[str, Any] = {}
         raw_stats = response.headers.get("X-NVS-Deess-Stats")
         if raw_stats:

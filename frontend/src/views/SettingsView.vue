@@ -50,7 +50,7 @@ const sectionDefinitions: SectionDefinition[] = [
   },
   {
     key: 'voice_design',
-    title: '音色设计 Worker',
+    title: '音色设计引擎服务',
     caption: 'voice_design',
     fields: [
       'provider',
@@ -63,7 +63,7 @@ const sectionDefinitions: SectionDefinition[] = [
   },
   {
     key: 'tts',
-    title: 'TTS Worker',
+    title: 'TTS 引擎服务',
     caption: 'tts',
     fields: [
       'provider',
@@ -111,7 +111,7 @@ const FIELD_LABELS: Record<string, string> = {
   keep_alive: '模型保活',
   timeout_seconds: '超时（秒）',
   model_id: '模型 ID',
-  worker_url: 'Worker 地址',
+  worker_url: '引擎服务地址',
   candidates: '默认候选数',
   seeds: '默认种子',
   default_seed: '生成种子',
@@ -203,7 +203,7 @@ onMounted(() => {
           <p class="eyebrow">SETTINGS / 设置</p>
           <h1 class="mt-3 font-display text-3xl text-fog-100">系统状态与配置</h1>
           <p class="mt-2 max-w-2xl text-sm leading-6 text-fog-400">
-            只读设置视图：检查本机依赖、数据库与两个语音 Worker 的连通性，并展示实际生效的配置。
+            只读设置视图：检查本机依赖、数据库与两个语音引擎服务的连通性，并展示实际生效的配置。
           </p>
         </div>
         <div class="flex items-center gap-2">
@@ -239,7 +239,7 @@ onMounted(() => {
               {{
                 system.mockMode
                   ? 'LLM、音色设计与 TTS 均返回确定性模拟结果，不加载真实模型、不访问外部 AI 服务。'
-                  : '真实模式使用本机 Ollama 与 Qwen3-TTS / CosyVoice3 Worker；Worker 未启动时相关任务会明确报错，不会伪装成功。'
+                  : '真实模式使用本机 Ollama 与 Qwen3-TTS / CosyVoice3 引擎服务；服务未启动时相关任务会明确报错，不会伪装成功。'
               }}
             </p>
           </div>
@@ -315,7 +315,7 @@ onMounted(() => {
             <h2 class="mt-2 font-display text-xl text-fog-100">服务状态</h2>
           </div>
           <p class="text-[10px] text-fog-500">
-            核心组件异常会影响使用；语音 Worker 未启动时只影响音色设计与配音生成。
+            核心组件异常会影响使用；语音引擎服务未启动时只影响音色设计与配音生成。
           </p>
         </div>
 

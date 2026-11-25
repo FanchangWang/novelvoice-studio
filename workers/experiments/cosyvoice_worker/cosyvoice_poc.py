@@ -7,7 +7,7 @@
   4. 已运行 qwen_tts_worker/voice_design_poc.py 生成参考音
 
 用法（在仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/cosyvoice_poc.py
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/cosyvoice_poc.py
 
 输出：
   %USERPROFILE%\\Documents\\NovelVoiceStudio\\poc_output\\emotions\\
@@ -24,7 +24,7 @@ from pathlib import Path
 import soundfile as sf
 import torch
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[2] / "cosyvoice_worker"
 SOURCE_DIR = ROOT / "CosyVoice"
 CACHE = Path(os.getenv(
     "NOVELVOICE_MODEL_CACHE",

@@ -6,6 +6,8 @@
 
 - [项目 README](../README.md)：安装、启动、配置、测试与数据目录。
 - [架构说明](ARCHITECTURE_NOTES.md)：模块边界、数据流、安全边界与阶段口径。
+- [引擎服务目录](../workers/README.md)：`workers/` 的服务清单、独立 venv、回环协议与启停命令。
+- [历史实验归档](../workers/experiments/README.md)：阶段 0/3 实验脚本、试听页生成器与旧路径映射；不参与生产运行。
 - [模型清单与使用](MODELS.md)：LLM、语音模型的来源、下载链接、缓存位置与启动方式。
 
 ## 需求
@@ -16,7 +18,7 @@
 
 - [阶段 0 POC 报告](reports/POC_REPORT.md)：硬件环境、模型来源、结构化输出与三音色试听。
 - [阶段 2 验收报告](reports/STAGE2_REPORT.md)：本机 Ollama 分析、角色/片段审核闭环。
-- [阶段 3 验收报告](reports/STAGE3_REPORT.md)：音色设计、逐段生成、版本回退与 Worker 协议。
+- [阶段 3 验收报告](reports/STAGE3_REPORT.md)：音色设计、逐段生成、版本回退与引擎服务协议。
 - [阶段 3 音质计划](reports/STAGE3_AUDIO_QUALITY_PLAN.md)：实验矩阵与退出标准。
 - [阶段 3 音质报告](reports/STAGE3_AUDIO_QUALITY_REPORT.md)：音质实验、评分与选型结论。
 - [阶段 3 复听结果](reports/STAGE3_LISTENING_RESULT.md)：首轮复听 gate 不通过。
@@ -24,6 +26,7 @@
 - [阶段 3B 复听结果](reports/STAGE3B_LISTENING_RESULT.md)：复听 gate 通过。
 - [阶段 3C 去齿报告](reports/STAGE3C_SIBILANCE_REPORT.md)：句中毛刺与齿音处理定稿。
 - [阶段 3C 复听结果](reports/STAGE3C_LISTENING_RESULT.md)：最终偏好与遗留问题。
+- [引擎服务正式化与仓库清理记录](reports/ENGINE_SERVICE_AND_REPO_CLEANUP_2026-11-26.md)：统一启停、实验归档、Mizuoto 结论与回归验证。
 
 ## 阅读边界
 

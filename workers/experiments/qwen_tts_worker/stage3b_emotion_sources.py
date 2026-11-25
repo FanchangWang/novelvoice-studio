@@ -5,7 +5,7 @@
      把音色换回用户选定的参考音，从而同时获得情绪与音色一致性。
 
 用法（仓库根目录）：
-  workers/qwen_tts_worker/.venv/Scripts/python.exe workers/qwen_tts_worker/stage3b_emotion_sources.py \
+  workers/qwen_tts_worker/.venv/Scripts/python.exe workers/experiments/qwen_tts_worker/stage3b_emotion_sources.py \
       --character narrator --emotion sad --seeds 42,123
 """
 

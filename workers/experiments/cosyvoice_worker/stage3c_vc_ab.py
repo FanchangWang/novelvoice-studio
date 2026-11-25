@@ -8,7 +8,7 @@
 每个输出同时生成 deess_g0 / deess_g1 / deess_extreme 三个后处理版本，便于试听。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3c_vc_ab.py
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3c_vc_ab.py
 """
 
 from __future__ import annotations
@@ -24,6 +24,11 @@ import numpy as np
 import soundfile as sf
 
 from stage3_ab import DEFAULT_MODEL_DIR, DEFAULT_SOURCE_DIR, audio_stats, build_prompt_text, sha256_file
+
+# stage3c_deess.py 仍是生产依赖，留在 cosyvoice_worker/。
+RUNTIME_WORKER_DIR = Path(__file__).resolve().parents[2] / "cosyvoice_worker"
+if str(RUNTIME_WORKER_DIR) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_WORKER_DIR))
 from stage3c_deess import deess, read_mono, spectral_stats
 
 STAGE3C = Path.home() / "Documents" / "NovelVoiceStudio" / "cache" / "poc_output" / "stage3c"

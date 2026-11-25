@@ -148,7 +148,7 @@ class ExportConfig(BaseModel):
 
 
 class ProvidersConfig(BaseModel):
-    # mock: 不加载任何模型；real: 本机 Ollama + 本机语音 Worker
+    # mock: 不加载任何模型；real: 本机 Ollama + 本机语音引擎服务
     mode: Literal["mock", "real"] = "mock"
 
 

@@ -5,7 +5,7 @@
 输出到 stage3b/fp32_core，不覆盖已有实验。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3b_fp32_core.py
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3b_fp32_core.py
 """
 
 from __future__ import annotations

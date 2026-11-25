@@ -1,4 +1,4 @@
-"""Qwen3-TTS VoiceDesign 本机 HTTP Worker。
+"""Qwen3-TTS VoiceDesign 本机 HTTP 引擎服务。
 
 只监听 127.0.0.1，不下载模型、不读取任意路径。模型在第一次请求时加载，
 可用 /v1/unload 主动释放显存。
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import hmac
 import io
 import os
 import threading
@@ -26,11 +27,13 @@ from typing import Any
 
 import numpy as np
 import soundfile as sf
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+ENGINE_INSTANCE_ID = os.getenv("NOVELVOICE_ENGINE_INSTANCE_ID", "")
+ENGINE_CONTROL_TOKEN = os.getenv("NOVELVOICE_ENGINE_CONTROL_TOKEN", "")
 DEFAULT_CACHE = Path(
     os.getenv(
         "NOVELVOICE_MODEL_CACHE",
@@ -104,7 +107,7 @@ def _ensure_model():  # type: ignore[no-untyped-def]
         return _model
 
 
-app = FastAPI(title="NovelVoice Qwen TTS Worker", version="0.1.0")
+app = FastAPI(title="NovelVoice Qwen TTS Engine Service", version="0.1.0")
 
 
 @app.get("/health")
@@ -119,6 +122,8 @@ def health() -> dict[str, Any]:
     return {
         "ok": True,
         "worker": "qwen3_tts_voice_design",
+        "instance_id": ENGINE_INSTANCE_ID,
+        "pid": os.getpid(),
         "model_id": MODEL_ID,
         "model_dir": str(DEFAULT_MODEL_DIR),
         "model_dir_exists": DEFAULT_MODEL_DIR.is_dir(),
@@ -129,6 +134,26 @@ def health() -> dict[str, Any]:
         "torch": torch.__version__,
         "gpu": gpu,
     }
+
+
+@app.post("/v1/shutdown")
+def shutdown(
+    x_nvs_engine_token: str | None = Header(default=None, alias="X-NVS-Engine-Token"),
+) -> dict[str, Any]:
+    """只在本控制面注入令牌时启用；由引擎服务控制器请求 uvicorn 优雅退出。"""
+    if not ENGINE_CONTROL_TOKEN:
+        raise HTTPException(status_code=404, detail="未启用控制接口")
+    if not x_nvs_engine_token or not hmac.compare_digest(
+        x_nvs_engine_token, ENGINE_CONTROL_TOKEN
+    ):
+        raise HTTPException(status_code=403, detail="控制令牌无效")
+    server = getattr(app.state, "uvicorn_server", None)
+    if server is None:
+        raise HTTPException(status_code=409, detail="服务尚未就绪")
+    timer = threading.Timer(0.1, lambda: setattr(server, "should_exit", True))
+    timer.daemon = True
+    timer.start()
+    return {"ok": True, "pid": os.getpid(), "instance_id": ENGINE_INSTANCE_ID}
 
 
 @app.post("/v1/generate")
@@ -200,13 +225,13 @@ def unload() -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Qwen3-TTS VoiceDesign Worker")
+    parser = argparse.ArgumentParser(description="Qwen3-TTS VoiceDesign Engine Service")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--preload", action="store_true")
     args = parser.parse_args()
     if args.host not in {"127.0.0.1", "localhost", "::1"}:
-        raise SystemExit("出于本地优先原则，Worker 只允许绑定回环地址")
+        raise SystemExit("出于本地优先原则，引擎服务只允许绑定回环地址")
     if args.preload or os.getenv("NOVELVOICE_QWEN_PRELOAD") == "1":
         try:
             _ensure_model()
@@ -214,7 +239,11 @@ def main() -> None:
             print(f"[WARN] 预加载失败，将在首次请求时重试：{exc}")
     import uvicorn
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
+    server = uvicorn.Server(config)
+    # 供 /v1/shutdown（控制面注入令牌时）触发优雅退出。
+    app.state.uvicorn_server = server
+    server.run()
 
 
 if __name__ == "__main__":

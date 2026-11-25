@@ -6,7 +6,7 @@
   - 阶段 3 基线与 Qwen 源 + CosyVoice VC 的对照。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3b_audition_metrics.py
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3b_audition_metrics.py
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import numpy as np
 DEFAULT_CACHE = Path.home() / "Documents" / "NovelVoiceStudio" / "cache" / "modelscope"
 DEFAULT_MODEL_DIR = DEFAULT_CACHE / "Fun-CosyVoice3-0.5B-2512"
 DEFAULT_STAGE3B_DIR = DEFAULT_CACHE.parent / "poc_output" / "stage3b"
-SOURCE_DIR = Path(__file__).resolve().parent / "CosyVoice"
+SOURCE_DIR = Path(__file__).resolve().parents[2] / "cosyvoice_worker" / "CosyVoice"
 
 
 def cosine(a: np.ndarray, b: np.ndarray) -> float | None:

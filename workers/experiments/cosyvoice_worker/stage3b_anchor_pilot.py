@@ -8,7 +8,7 @@
 试点只跑旁白，验证方向是否值得扩展。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3b_anchor_pilot.py
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3b_anchor_pilot.py
 """
 
 from __future__ import annotations

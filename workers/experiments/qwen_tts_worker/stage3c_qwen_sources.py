@@ -7,7 +7,7 @@
 只生成 Qwen 源，VC 与后处理在 cosyvoice_worker 的 stage3c_vc_ab.py 中完成。
 
 用法（仓库根目录）：
-  workers/qwen_tts_worker/.venv/Scripts/python.exe workers/qwen_tts_worker/stage3c_qwen_sources.py
+  workers/qwen_tts_worker/.venv/Scripts/python.exe workers/experiments/qwen_tts_worker/stage3c_qwen_sources.py
 """
 
 from __future__ import annotations

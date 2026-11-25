@@ -85,7 +85,7 @@ const modeDetail = computed(() => {
   if (system.mockMode) {
     return 'Mock LLM 返回确定性结果，不会调用任何模型，也不会联网。'
   }
-  return 'LLM 使用本机 Ollama；音色设计与合成使用本机语音 Worker（需单独启动）。'
+  return 'LLM 使用本机 Ollama；音色设计与合成使用本机语音引擎服务（需单独启动）。'
 })
 
 function confirmStart(mode: 'all' | 'pending'): void {

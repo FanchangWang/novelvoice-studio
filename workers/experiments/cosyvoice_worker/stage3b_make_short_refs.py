@@ -4,7 +4,7 @@
 参考文本只写第一句，避免文本与音频不一致。输出到 stage3b/refs_short，不覆盖原参考。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3b_make_short_refs.py
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3b_make_short_refs.py
 """
 
 from __future__ import annotations

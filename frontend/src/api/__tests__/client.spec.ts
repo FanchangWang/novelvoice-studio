@@ -176,7 +176,7 @@ describe('api client', () => {
         {
           error: {
             code: 'dependency_unavailable',
-            message: '语音 Worker 未启动',
+            message: '语音引擎服务未启动',
             details: {},
           },
         },

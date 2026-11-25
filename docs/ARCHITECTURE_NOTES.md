@@ -12,9 +12,9 @@
 
 - 所有模型 ID 均为候选值，必须以 `docs/reports/POC_REPORT.md` 实测结果为准。
 - 核心项目：uv project，Python 3.12（已确认）。
-- CosyVoice Worker：独立 Python 3.10 环境（官方建议版本），目录内 `pyproject.toml` 已限定 `requires-python = ">=3.10,<3.11"`；`uv run` 会自动选用 3.10，不与核心项目混用。
-- Qwen3-TTS Worker：独立 Python 3.12 环境，目录内同样有独立 `pyproject.toml`。
-- Worker 的 `uv.lock`、POC 脚本纳入版本管理；`.venv`、CosyVoice 第三方克隆、模型与输出文件不提交。
+- CosyVoice 引擎服务：独立 Python 3.10 环境（官方建议版本），目录内 `pyproject.toml` 已限定 `requires-python = ">=3.10,<3.11"`；`uv run` 会自动选用 3.10，不与核心项目混用。
+- Qwen3-TTS 引擎服务：独立 Python 3.12 环境，目录内同样有独立 `pyproject.toml`。
+- 引擎服务的 `uv.lock` 纳入版本管理；历史实验脚本归档在 `workers/experiments/`，`.venv`、CosyVoice 第三方克隆、模型与输出文件不提交。生产服务清单见 `workers/services.yaml`，不把实验脚本当作服务入口。
 - LLM 实测采用 ModelScope 文本版 GGUF，调用时必须 `think=false`，否则 `message.content` 为空。
 - 大型模型下载走 ModelScope 国内源；Ollama 安装包走本机 GitHub 加速器。
 - 不自动下载模型；`scripts/download_models.ps1` 仅在用户明确确认后运行。
@@ -80,7 +80,7 @@ SQLite 的 `(book_id, sequence)` 唯一约束立即检查，而批量 UPDATE 不
 - SQLite 使用 WAL；启动时按配置自动迁移，迁移前备份到数据目录 `backups/`。
 - 原始 TXT 保留；`source_text` 只读，编辑只影响 `speech_text`。
 - 时间统一 UTC，前端本地化展示。
-- 数据目录、日志、`.run/`、SQLite 文件、前端构建产物、Worker 虚拟环境与模型均不提交。
+- 数据目录、日志、`.run/`、SQLite 文件、前端构建产物、引擎服务虚拟环境与模型均不提交。
 
 ## 7. 测试策略
 
@@ -137,8 +137,8 @@ SQLite 的 `(book_id, sequence)` 唯一约束立即检查，而批量 UPDATE 不
 - 情感源与最终音色分离：Qwen3-TTS VoiceDesign 按角色描述与情绪指令生成情感源，CosyVoice3 `inference_vc` 再转换到固定参考音。这样情绪变化不再直接改变角色身份。
 - 音色设计一次产生多个候选（默认 3 个），只有用户绑定后才成为该 owner 的固定音色；候选与绑定状态分开存储。
 - 参考音去齿只在**绑定候选**时执行，生成阶段不重复处理。阶段 3C 定稿参数为 4–10kHz 动态衰减、`threshold_ratio=0.24`、`full_ratio=0.62`、最多 `-5dB`；原始参考路径与 DSP 统计留在生成参数中。
-- 单个 Worker 进程服务一个模型；应用侧用进程内锁串行化整条 Qwen + CosyVoice 链，避免同一 GPU 并发导致显存峰值叠加。
-- Mock 模式返回确定性 WAV 与假数据，跳过真实 Worker 和 DSP；真实模式只允许两个 Worker URL 指向回环地址。
+- 单个引擎服务进程服务一个模型；应用侧用进程内锁串行化整条 Qwen + CosyVoice 链，避免同一 GPU 并发导致显存峰值叠加。
+- Mock 模式返回确定性 WAV 与假数据，跳过真实引擎服务和 DSP；真实模式只允许两个服务 URL 指向回环地址。
 
 ### 9.2 音频资产与版本
 
@@ -148,12 +148,14 @@ SQLite 的 `(book_id, sequence)` 唯一约束立即检查，而批量 UPDATE 不
 - 生成结果先通过 RIFF/WAVE 解析校验再落库；失败时片段标记 `failed`，不会留下半成品当前版本。
 - 修改台词、说话人、情绪、强度、演绎方式等影响音频的字段会使旧音频失效、要求重新生成；回退版本不能绕过该语义。
 
-### 9.3 Worker 协议与生命周期
+### 9.3 引擎服务协议与生命周期
 
-- 两个 Worker 只监听 127.0.0.1：Qwen 8766 提供 `/health`、`/v1/generate`、`/v1/unload`；CosyVoice 8767 提供 `/health`、`/v1/vc`、`/v1/deess`、`/v1/unload`。
-- 音频以 Base64 JSON 输入、以音频字节输出，元数据放 `X-NVS-*` 响应头；Worker 不读取调用方路径，不执行任意文件访问，不自动下载模型。
-- `scripts/start_workers.ps1` 只启动各自 venv 中存在的 `server.py`，日志与 PID 状态写入 `.run/workers`；`stop_workers.ps1` 仅结束命令行与记录匹配的进程，未知监听者只报告。
-- 模型按需加载，首次生成较慢；`-Preload` 可提前加载，但会提前占用显存。Worker 环境与模型缓存不进入应用 venv，也不提交仓库。语音模型默认缓存到数据目录的 `cache/modelscope`；Ollama LLM 仍由 Ollama 管理在其默认目录（`%USERPROFILE%\.ollama\models`），不放进项目数据目录。
+- `workers/` 是正式的引擎服务目录：`services.yaml` 登记生产入口，两个子目录各自是独立 uv project（Python 3.12/torch cu128 与 Python 3.10/torch cu121），应用只通过回环 HTTP 调用，不导入其代码。`workers/experiments/` 归档阶段实验脚本，不属于服务协议。
+- 两个引擎服务只监听 127.0.0.1：Qwen 8766 提供 `/health`、`/v1/generate`、`/v1/unload`；CosyVoice 8767 提供 `/health`、`/v1/vc`、`/v1/deess`、`/v1/unload`；两者都提供由控制器令牌保护的 `/v1/shutdown`。
+- 音频以 Base64 JSON 输入、以音频字节输出，元数据放 `X-NVS-*` 响应头；服务不读取调用方路径，不执行任意文件访问，不自动下载模型。
+- 统一控制命令为 `uv run novelvoice-studio worker list|status|start|stop|restart|logs`；`scripts/start_workers.ps1` 与 `stop_workers.ps1` 只是兼容入口。控制器从 `voice_design.worker_url` / `tts.worker_url` 解析端口，不重复配置。
+- 状态和日志写入 `.run/workers`；状态同时记录启动器 PID 与 `/health` 回填的实际服务 PID。启动前检查 `/health` 与端口；停止时优先请求 `/v1/shutdown`（实例 ID 必须一致），`--force` 只在进程仍存活且命令行指向登记的 `server.py` 时结束进程，外部启动的服务只报告、不误杀。
+- 模型按需加载，首次生成较慢；`--preload` 可提前加载，但会提前占用显存。服务环境与模型缓存不进入应用 venv，也不提交仓库。语音模型默认缓存到数据目录的 `cache/modelscope`；Ollama LLM 仍由 Ollama 管理在其默认目录（`%USERPROFILE%\.ollama\models`），不放进项目数据目录。
 
 ### 9.4 前端
 
@@ -165,7 +167,7 @@ SQLite 的 `(book_id, sequence)` 唯一约束立即检查，而批量 UPDATE 不
 
 - 自动化：后端 pytest 102 passed；前端 Vitest 7 个文件 33 passed；`vue-tsc + vite build` 通过。
 - Mock 浏览器走查：设计旁白/两个角色候选并绑定，生成旁白 v001/v002，回退 v001，改绑角色片段后生成成功。
-- 真实 Worker 冒烟：Qwen 设计候选约 11.84 秒；绑定与参考去齿约 0.156 秒；Qwen + CosyVoice 单段生成约 31.9 秒，输出 24kHz 单声道 PCM WAV。
+- 真实引擎服务冒烟：Qwen 设计候选约 11.84 秒；绑定与参考去齿约 0.156 秒；Qwen + CosyVoice 单段生成约 31.9 秒，输出 24kHz 单声道 PCM WAV。
 - 音质 gate 以阶段 3B/3C 复听记录为准；3B 通过，3C 接受 `refdeess + raw` 定稿，但“菜 / 三”擦音与句尾气声仍有残留。不能把应用功能验收等同于音质验收。
 - 仍未完成：阶段 4 的批量队列、连续播放与 M4B 导出；阶段 0 的许可证核对（含 `ttsfrd` / `wetext`）与参考文本条件验证。
 - 详细记录见 `docs/reports/STAGE3_REPORT.md`。

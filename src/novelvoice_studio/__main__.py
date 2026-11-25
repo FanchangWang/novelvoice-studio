@@ -1,8 +1,12 @@
-"""启动入口：uv run novelvoice-studio。"""
+"""启动入口：uv run novelvoice-studio。
+
+`worker` 子命令交给 engine_services 控制面；其余参数保持原有行为，启动 Web 服务。
+"""
 
 from __future__ import annotations
 
 import logging
+import sys
 
 import uvicorn
 
@@ -12,7 +16,13 @@ from novelvoice_studio.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "worker":
+        from novelvoice_studio.engine_services import main as engine_main
+
+        raise SystemExit(engine_main(args[1:]))
+
     settings = get_settings()
     app = create_app(settings)
     config = uvicorn.Config(

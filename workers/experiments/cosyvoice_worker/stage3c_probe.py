@@ -9,7 +9,7 @@
 不生成新音频，只做只读诊断。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3c_probe.py
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3c_probe.py
 """
 
 from __future__ import annotations

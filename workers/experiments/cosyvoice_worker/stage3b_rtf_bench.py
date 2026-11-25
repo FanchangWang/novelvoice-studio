@@ -5,8 +5,8 @@ CosyVoice 的 RTF 会受 GPU 冷启动、时钟和调度影响。本脚本先做
 不把单次 RTF 当作结论。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3b_rtf_bench.py --ref full --fp16
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3b_rtf_bench.py --ref short --fp16 --no-cache
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3b_rtf_bench.py --ref full --fp16
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3b_rtf_bench.py --ref short --fp16 --no-cache
 """
 
 from __future__ import annotations

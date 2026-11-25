@@ -167,12 +167,12 @@ onMounted(() => {
         <NAlert v-if="system.mockMode" type="warning" :bordered="false" class="mb-4">
           <p class="text-[11px] leading-5">
             当前为模拟模式：音色候选是测试音，不会加载模型。切换到真实模式后，请先启动
-            Qwen3-TTS 与 CosyVoice3 Worker。
+            Qwen3-TTS 与 CosyVoice3 引擎服务。
           </p>
         </NAlert>
         <NAlert v-else-if="system.mockMode === false" type="info" :bordered="false" class="mb-4">
           <p class="text-[11px] leading-5">
-            真实模式：设计音色会调用本机 Worker（127.0.0.1:8766 / 8767）。
+            真实模式：设计音色会调用本机引擎服务（127.0.0.1:8766 / 8767）。
             首次加载模型需要等待，单 GPU 下任务会串行执行。
           </p>
         </NAlert>

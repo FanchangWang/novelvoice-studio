@@ -4,8 +4,8 @@
 输出到数据目录 poc_output/stage3/experiments，不覆盖阶段 0 样本。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3_ab.py --group all
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3_ab.py --group core,eval
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3_ab.py --group all
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3_ab.py --group core,eval
 """
 
 from __future__ import annotations
@@ -31,7 +31,9 @@ DEFAULT_CACHE = Path(
 )
 DEFAULT_MODEL_DIR = DEFAULT_CACHE / "Fun-CosyVoice3-0.5B-2512"
 DEFAULT_STAGE3_DIR = DEFAULT_CACHE.parent / "poc_output" / "stage3"
-DEFAULT_SOURCE_DIR = Path(__file__).resolve().parent / "CosyVoice"
+# 实验脚本已归档到 workers/experiments/，生产源码仍留在 workers/cosyvoice_worker/。
+RUNTIME_WORKER_DIR = Path(__file__).resolve().parents[2] / "cosyvoice_worker"
+DEFAULT_SOURCE_DIR = RUNTIME_WORKER_DIR / "CosyVoice"
 DEFAULT_CASES = Path(__file__).resolve().parent / "stage3_cases.json"
 
 SENTENCE_SPLIT = re.compile(r"(?<=[。！？!?])")

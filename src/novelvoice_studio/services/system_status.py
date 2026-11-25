@@ -1,4 +1,4 @@
-"""系统状态检查：数据库、磁盘、FFmpeg、Ollama、Worker、GPU。"""
+"""系统状态检查：数据库、磁盘、FFmpeg、Ollama、语音引擎服务、GPU。"""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import asyncio
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import httpx
 from sqlalchemy import Engine, text
@@ -230,27 +231,50 @@ async def _worker_status(
 ) -> ComponentStatus:
     url = f"{base_url.rstrip('/')}/health"
     try:
-        # Worker 与本机 Provider 一样，不得经过系统代理。
+        # 引擎服务与本机 Provider 一样，不得经过系统代理。
         async with httpx.AsyncClient(timeout=1.5, trust_env=False) as client:
             response = await client.get(url)
-        ok = response.status_code < 500
+        health: dict[str, Any] = {}
+        try:
+            parsed = response.json()
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            health = parsed
+        ok = response.status_code == 200 and health.get("ok", True) is not False
+        loaded = health.get("model_loaded")
+        if ok and loaded is True:
+            detail = "引擎服务已响应，模型已加载"
+        elif ok and loaded is False:
+            detail = "引擎服务已响应，模型按需加载"
+        elif ok:
+            detail = f"引擎服务已响应（HTTP {response.status_code}）"
+        elif response.status_code != 200:
+            detail = f"引擎服务返回 HTTP {response.status_code}"
+        else:
+            detail = "引擎服务报告未就绪"
         return ComponentStatus(
             id=worker_id,
             label=label,
             ok=ok,
-            detail=(
-                f"Worker 已响应（HTTP {response.status_code}）"
-                if ok
-                else f"Worker 返回 HTTP {response.status_code}"
-            ),
-            meta={"url": base_url, "model_id": model_id, "health_url": url},
+            detail=detail,
+            meta={
+                "url": base_url,
+                "model_id": model_id,
+                "health_url": url,
+                "worker": health.get("worker"),
+                "model_loaded": loaded,
+                "pid": health.get("pid"),
+                "load_seconds": health.get("load_seconds"),
+                "load_error": health.get("load_error"),
+            },
         )
     except Exception as exc:  # noqa: BLE001
         return ComponentStatus(
             id=worker_id,
             label=label,
             ok=False,
-            detail="Worker 未启动（音色设计与配音生成需要）",
+            detail="引擎服务未启动（音色设计与配音生成需要）",
             meta={
                 "url": base_url,
                 "model_id": model_id,
@@ -271,13 +295,13 @@ async def collect_system_status(
         _ollama_status(settings),
         _worker_status(
             "voice_design_worker",
-            "Qwen3-TTS VoiceDesign Worker",
+            "Qwen3-TTS VoiceDesign 引擎服务",
             settings.voice_design.worker_url,
             settings.voice_design.model_id,
         ),
         _worker_status(
             "tts_worker",
-            "CosyVoice TTS Worker",
+            "CosyVoice3 引擎服务",
             settings.tts.worker_url,
             settings.tts.model_id,
         ),

@@ -8,8 +8,8 @@
 另外输出一版“衰减而非硬切”的变体，方便人工 A/B。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3b_tail.py
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3b_tail.py --file xxx.wav
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3b_tail.py
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3b_tail.py --file xxx.wav
 """
 
 from __future__ import annotations

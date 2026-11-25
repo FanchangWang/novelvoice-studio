@@ -5,7 +5,7 @@
 明确的“正常语速、不拖腔”描述，输出到独立目录，不覆盖阶段 3 候选。
 
 用法（仓库根目录）：
-  workers/qwen_tts_worker/.venv/Scripts/python.exe workers/qwen_tts_worker/voice_design_stage3b.py
+  workers/qwen_tts_worker/.venv/Scripts/python.exe workers/experiments/qwen_tts_worker/voice_design_stage3b.py
 """
 
 from __future__ import annotations

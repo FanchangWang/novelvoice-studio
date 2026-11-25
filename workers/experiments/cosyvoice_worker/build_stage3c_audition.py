@@ -2,7 +2,7 @@
 
 只复制已生成的 WAV，不做额外处理；生成单文件 HTML 与 manifest。
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/build_stage3c_audition.py
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/build_stage3c_audition.py
 """
 
 from __future__ import annotations

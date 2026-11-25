@@ -26,7 +26,8 @@ llm:
 voice_design:
   provider: "qwen3_tts"
   model_id: "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
-  # Worker 由 scripts/start_workers.ps1 单独启动；只接受回环地址。
+  # 引擎服务由 `uv run novelvoice-studio worker start`（或 scripts/start_workers.ps1）单独启动；
+  # 服务清单见 workers/services.yaml，只接受回环地址。
   worker_url: "http://127.0.0.1:8766"
   timeout_seconds: 180
   candidates: 3                 # 每次设计生成 1–5 个候选
@@ -71,6 +72,6 @@ export:
 
 providers:
   # mock: 不加载模型，返回确定性模拟结果（界面显示“模拟模式”）
-  # real: LLM 使用本机 Ollama；声音设计/合成使用本机 8766/8767 Worker。
-  # 应用不会自动拉起 Worker，请先运行 scripts/start_workers.ps1。
+  # real: LLM 使用本机 Ollama；声音设计/合成使用本机 8766/8767 引擎服务。
+  # 应用不会自动拉起引擎服务，请先运行 `uv run novelvoice-studio worker start`。
   mode: "mock"

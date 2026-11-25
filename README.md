@@ -12,7 +12,7 @@
 - 全书分析任务：进度、取消、失败重试、启动时中断恢复；用户编辑字段在重跑时保留。
 - 声音库（阶段 3）：按书为旁白/角色生成多个音色候选，试听、绑定、切换、删除未使用候选；参考音在绑定时自动去齿。
 - 配音工作台（阶段 3）：按片段生成 WAV，逐条试听，保留历史版本并回退；未识别说话人或未绑定音色的片段会明确阻止生成。
-- 本机语音 Worker：Qwen3-TTS VoiceDesign（8766）+ CosyVoice3 Voice Conversion（8767），只监听回环地址。
+- 引擎服务目录：`workers/` 下的 Qwen3-TTS VoiceDesign（8766）+ CosyVoice3 Voice Conversion（8767），独立 venv、只监听回环地址，由统一控制器启停。
 - Mock Provider：不加载模型、不联网推理，返回确定性占位数据；界面明确标注「模拟模式」。
 - 本机服务：FastAPI 自动迁移 SQLite、静态托管 Vue 构建产物、受控优雅停止。
 - 测试：后端 pytest、前端 Vitest/TypeScript 构建。
@@ -26,10 +26,10 @@
 - [uv](https://docs.astral.sh/uv/) 0.13+
 - Node.js >= 20.19、npm
 - 阶段 2 真实分析：本机 [Ollama](https://ollama.com/) 与 `modelscope.cn/unsloth/Qwen3.5-4B-GGUF:latest`（[ModelScope 页面](https://modelscope.cn/models/unsloth/Qwen3.5-4B-GGUF)）
-- 阶段 3 真实语音：可用的 NVIDIA GPU、两个独立 Worker venv、ModelScope 模型缓存
+- 阶段 3 真实语音：可用的 NVIDIA GPU、两个独立引擎服务 venv、ModelScope 模型缓存
 - 可选：FFmpeg / ffprobe（阶段 4 音频导出；阶段 3 的 WAV 试听不需要）
 
-Mock 模式不需要 GPU、不需要下载大模型，也不会自动安装 Worker 环境。
+Mock 模式不需要 GPU、不需要下载大模型，也不会自动安装引擎服务环境。
 
 ## 快速开始
 
@@ -55,33 +55,35 @@ pwsh.exe -File scripts/stop.ps1 -Force
 
 ### 启用真实语音
 
-应用**不会自动下载模型，也不会自动拉起 Worker**。首次使用按以下顺序准备（会占用约 14 GB 磁盘，需你明确同意）：
+应用**不会自动下载模型，也不会自动拉起引擎服务**。`workers/` 是正式的引擎服务目录，服务清单、协议和新增服务步骤见 [workers/README.md](workers/README.md)。首次使用按以下顺序准备（会占用约 14 GB 磁盘，需你明确同意）：
 
 ```powershell
 # 1. 从 ModelScope 国内源下载两阶段模型（显式运行，不自动触发）
 pwsh.exe -File scripts/download_models.ps1
 
-# 2. 准备两个独立 Worker 环境（不要装进核心 .venv）
+# 2. 准备两个独立引擎服务环境（不要装进核心 .venv）
 cd workers/qwen_tts_worker
 uv sync
 cd ../cosyvoice_worker
 uv sync
 cd ../..
 
-# 3. 启动两个 Worker（模型默认按需加载，首次生成会明显变慢）
-pwsh.exe -File scripts/start_workers.ps1
+# 3. 启动引擎服务（模型默认按需加载，首次生成会明显变慢）
+uv run novelvoice-studio worker start
 # 可选：启动时即加载模型
-pwsh.exe -File scripts/start_workers.ps1 -Preload
+uv run novelvoice-studio worker start --preload
 
 # 4. 以真实模式启动应用
 $env:NOVELVOICE_PROVIDERS__MODE = "real"
 pwsh.exe -File scripts/start.ps1
 
-# 5. 停止 Worker（只处理本项目记录且命令行校验通过的进程）
-pwsh.exe -File scripts/stop_workers.ps1
+# 5. 停止引擎服务（只处理本项目记录且身份可核实的进程）
+uv run novelvoice-studio worker stop
 ```
 
-CosyVoice Worker 依赖 `workers/cosyvoice_worker/CosyVoice` 源码目录与模型缓存，准备方式见 [阶段 0 POC 报告](docs/reports/POC_REPORT.md)。各模型的 ID、ModelScope 链接与使用方式集中在 [模型清单](docs/MODELS.md)。真实模式要求 `voice_design.worker_url` 与 `tts.worker_url` 指向 `127.0.0.1` / `localhost` / `::1`，否则拒绝启动。
+也可以继续使用兼容入口 `scripts/start_workers.ps1 [-Preload]` 与 `scripts/stop_workers.ps1`；它们只转交参数，实际逻辑统一在 `src/novelvoice_studio/engine_services.py`。日常检查用 `uv run novelvoice-studio worker status`，日志用 `uv run novelvoice-studio worker logs`。
+
+CosyVoice 引擎服务依赖 `workers/cosyvoice_worker/CosyVoice` 源码目录与模型缓存，准备方式见 [阶段 0 POC 报告](docs/reports/POC_REPORT.md)。各模型的 ID、ModelScope 链接与使用方式集中在 [模型清单](docs/MODELS.md)。真实模式要求 `voice_design.worker_url` 与 `tts.worker_url` 指向 `127.0.0.1` / `localhost` / `::1`，否则拒绝启动。
 
 ## 使用流程
 
@@ -116,7 +118,7 @@ NOVELVOICE_APP__HOST=127.0.0.1
 NOVELVOICE_APP__PORT=8765
 NOVELVOICE_APP__DATA_DIR=D:\NovelVoiceData
 NOVELVOICE_PROVIDERS__MODE=mock
-NOVELVOICE_PROVIDERS__MODE=real          # 本机 Ollama + 本机语音 Worker
+NOVELVOICE_PROVIDERS__MODE=real          # 本机 Ollama + 本机引擎服务
 NOVELVOICE_LLM__MODEL=modelscope.cn/unsloth/Qwen3.5-4B-GGUF:latest
 
 NOVELVOICE_VOICE_DESIGN__WORKER_URL=http://127.0.0.1:8766
@@ -141,7 +143,7 @@ ollama list
 `config/config.yaml` 的 `llm.model` 必须与 Ollama 中的模型名完全一致。Ollama 模型由 Ollama 自己管理，默认放在 `%USERPROFILE%\.ollama\models`，本项目数据目录不保存 Ollama 模型，也不需要设置 `OLLAMA_MODELS`。模型清单、链接、体积与完整使用命令见 [docs/MODELS.md](docs/MODELS.md)。
 
 - `app.host` 只接受 `127.0.0.1` / `localhost` / `::1`，填写其他地址会拒绝启动。
-- 两个语音 Worker 同理，只接受本机回环地址。
+- 两个语音引擎服务同理，只接受本机回环地址。
 - `NOVELVOICE_CONTROL_TOKEN` 由 `scripts/server_control.py` 在启动时随机生成并只注入子进程，不要手工固定或提交。
 - `config/config.yaml`、`.env`、`.run/` 均已被 git 忽略。
 - 参考音去齿参数（4–10kHz、`threshold_ratio=0.24`、`full_ratio=0.62`、最多 `-5dB`）是阶段 3C 的定稿值；仅在绑定音色时执行，生成阶段不重复处理。
@@ -200,7 +202,7 @@ pwsh.exe -File ../scripts/check_environment.ps1
 - 仅监听回环地址；CORS 不使用通配符。
 - `TrustedHostMiddleware` 限制 Host；响应附带 `nosniff`、`DENY`、`no-referrer` 等头。
 - 上传只接受 `.txt`，限制大小；路径使用受控 ID 与目录校验，防路径穿越。
-- 语音 Worker 只接受回环请求，只交换 Base64/二进制音频，不接受任意文件路径，不自动下载模型。
+- 引擎服务只接受回环请求，只交换 Base64/二进制音频，不接受任意文件路径，不自动下载模型；停止接口只在控制器注入令牌时启用。
 - 不调用付费云 AI、无遥测。
 - 隐藏停机接口仅在启动器注入随机令牌时存在，需 `X-NVS-Control` 头匹配；不进入 OpenAPI 文档。
 
@@ -213,11 +215,11 @@ src/novelvoice_studio/
   db/             # Engine、迁移、会话
   models/         # SQLAlchemy 模型
   schemas/        # Pydantic 契约
-  ai/             # Provider 注册表、Ollama / Mock、Qwen/CosyVoice Worker 客户端与 Prompt
+  ai/             # Provider 注册表、Ollama / Mock、Qwen/CosyVoice 引擎服务客户端与 Prompt
 frontend/         # Vue 3 + Vite + Naive UI + Tailwind
 migrations/       # Alembic
-scripts/          # setup / start / stop / Worker 启停 / 环境检查 / 模型下载
-workers/          # 阶段 2/3 的独立 Worker（不使用核心 venv）
+scripts/          # setup / start / stop / 引擎服务启停兼容入口 / 环境检查 / 模型下载
+workers/          # 引擎服务目录：services.yaml + 独立 venv + 回环 HTTP；experiments/ 归档历史实验
 tests/            # 后端测试与公开合成 fixture
 config/           # 配置模板；实际 config.yaml 不入库
 docs/
@@ -232,20 +234,21 @@ docs/
 
 - **启动后发现页面 404**：`frontend/dist/index.html` 不存在。运行 `scripts/setup.ps1` 或 `cd frontend; npm run build`。
 - **端口被占用**：`start.ps1` 会输出占用 PID 与命令行，不会自动结束；确认后再处理。
-- **真实模式提示 Worker 未连接**：先运行 `scripts/start_workers.ps1`，检查 `.run/workers/*.err.log` 与 8766/8767 健康接口。
-- **首次设计/生成很慢**：Worker 按需加载模型；可用 `start_workers.ps1 -Preload`，但会提前占用显存。
+- **真实模式提示引擎服务未连接**：先运行 `uv run novelvoice-studio worker status`；启动用 `uv run novelvoice-studio worker start`（或 `scripts/start_workers.ps1`），检查 `.run/workers/*.err.log` 与 8766/8767 健康接口。
+- **首次设计/生成很慢**：引擎服务按需加载模型；可用 `worker start --preload`（或 `start_workers.ps1 -Preload`），但会提前占用显存。
+- **引擎服务日志**：`uv run novelvoice-studio worker logs`，文件在 `.run/workers/`。
 - **生成报“参考音频缺失”**：候选文件被移动或未绑定成功；在声音库重新选择或重新设计。
 - **删除音色被拒绝**：该音色仍是当前绑定项或已被片段使用；先绑定其他候选。
 - **长片段无法生成**：单段超过 `tts.max_text_chars`（默认 1200 字），先拆分章节/片段。
 - **停止失败**：先 `scripts/stop.ps1`；若服务无响应，可 `-Force`。脚本仍会校验进程身份。
 - **数据目录位置**：`scripts/server_control.py info` 可打印当前 host/port/data_dir/frontend_dist。
-- **查看日志**：应用 `.run/server.log`，Worker `.run/workers/`。
+- **查看日志**：应用 `.run/server.log`，引擎服务 `.run/workers/`。
 
 ## 阶段边界与后续
 
 - 阶段 1：导入 → 章节管理闭环。
 - 阶段 2：本机 Ollama 分析 → 角色/片段审核闭环；低置信度与回退片段必须人工确认。
-- 阶段 3：音色设计/绑定、逐段 WAV 生成、版本回退、Worker 启停与真实/模拟切换已实现。音质实验与复听记录见 [阶段 3 音质报告](docs/reports/STAGE3_AUDIO_QUALITY_REPORT.md)、[阶段 3B](docs/reports/STAGE3B_AUDIO_REPAIR_REPORT.md)、[阶段 3C](docs/reports/STAGE3C_SIBILANCE_REPORT.md)；应用验收见 [docs/reports/STAGE3_REPORT.md](docs/reports/STAGE3_REPORT.md)。
+- 阶段 3：音色设计/绑定、逐段 WAV 生成、版本回退、引擎服务启停与真实/模拟切换已实现。音质实验与复听记录见 [阶段 3 音质报告](docs/reports/STAGE3_AUDIO_QUALITY_REPORT.md)、[阶段 3B](docs/reports/STAGE3B_AUDIO_REPAIR_REPORT.md)、[阶段 3C](docs/reports/STAGE3C_SIBILANCE_REPORT.md)；应用验收见 [docs/reports/STAGE3_REPORT.md](docs/reports/STAGE3_REPORT.md)。
 - 阶段 4 尚未实现：批量生成与任务队列、连续播放器、按章节/全书导出 M4B、工程混音与多版本管理。
 - 阶段 0 的听感 gate 已由用户本人于 2026-11-25 有条件通过；sad 表现力、句尾气声与参考文本条件仍是质量待办。**许可证核对（含 `ttsfrd` / `wetext`）尚未完成**，不能视为已签收。
 

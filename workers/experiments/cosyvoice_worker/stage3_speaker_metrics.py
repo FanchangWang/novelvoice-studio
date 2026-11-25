@@ -6,7 +6,7 @@
   - 不同角色之间是否保持区分度。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3_speaker_metrics.py
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3_speaker_metrics.py
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ DEFAULT_CACHE = (
 )
 DEFAULT_MODEL_DIR = DEFAULT_CACHE / "Fun-CosyVoice3-0.5B-2512"
 DEFAULT_STAGE3_DIR = DEFAULT_CACHE.parent / "poc_output" / "stage3"
-SOURCE_DIR = Path(__file__).resolve().parent / "CosyVoice"
+SOURCE_DIR = Path(__file__).resolve().parents[2] / "cosyvoice_worker" / "CosyVoice"
 
 
 def cosine(a: np.ndarray, b: np.ndarray) -> float | None:

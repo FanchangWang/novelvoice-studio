@@ -164,7 +164,7 @@ onBeforeUnmount(revoke)
       </div>
 
       <p class="text-[10px] leading-5 text-fog-500">
-        试听只调用当前音色的参考音频，不会写入片段或生成历史。真实模式需要 Worker 已启动。
+        试听只调用当前音色的参考音频，不会写入片段或生成历史。真实模式需要引擎服务已启动。
       </p>
     </div>
 

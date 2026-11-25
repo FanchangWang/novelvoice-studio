@@ -7,7 +7,7 @@
   - 输出到独立目录，不覆盖阶段 0 样本。
 
 用法（仓库根目录）：
-  workers/qwen_tts_worker/.venv/Scripts/python.exe workers/qwen_tts_worker/voice_design_stage3.py
+  workers/qwen_tts_worker/.venv/Scripts/python.exe workers/experiments/qwen_tts_worker/voice_design_stage3.py
 """
 
 from __future__ import annotations

@@ -4,7 +4,7 @@
 避免参考音电平差异影响 CosyVoice 的特征提取。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/stage3_prepare_refs.py
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/stage3_prepare_refs.py
 """
 
 from __future__ import annotations

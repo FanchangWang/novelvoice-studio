@@ -4,7 +4,7 @@
 audition.html（无外网依赖）。音频只做复制，不做响度归一化，避免掩盖问题。
 
 用法（仓库根目录）：
-  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/build_stage3b_audition.py
+  workers/cosyvoice_worker/.venv/Scripts/python.exe workers/experiments/cosyvoice_worker/build_stage3b_audition.py
 
 输出（默认）：
   ~/Documents/NovelVoiceStudio/cache/poc_output/stage3b/audition.html
