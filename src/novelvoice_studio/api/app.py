@@ -22,6 +22,7 @@ from novelvoice_studio.core.logging import configure_logging
 from novelvoice_studio.db.migrate import run_migrations
 from novelvoice_studio.db.session import check_database, create_db_engine, create_session_factory
 from novelvoice_studio.services.analysis import recover_interrupted_analysis
+from novelvoice_studio.services.scripts import recover_interrupted_scripts
 
 logger = logging.getLogger(__name__)
 
@@ -53,18 +54,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     check_database(engine)
     session_factory = create_session_factory(engine)
     recovered = recover_interrupted_analysis(session_factory)
+    with session_factory() as session:
+        script_recovered = recover_interrupted_scripts(session)
+        session.commit()
     if (
         recovered["jobs"]
         or recovered["chapters"]
         or recovered["bible_jobs"]
         or recovered["scene_jobs"]
+        or script_recovered["jobs"]
+        or script_recovered["chapters"]
     ):
         logger.warning(
-            "已恢复中断的分析任务：jobs=%s chapters=%s bible_jobs=%s scene_jobs=%s",
+            "已恢复中断的分析任务：jobs=%s chapters=%s bible_jobs=%s scene_jobs=%s "
+            "script_jobs=%s script_chapters=%s",
             recovered["jobs"],
             recovered["chapters"],
             recovered["bible_jobs"],
             recovered["scene_jobs"],
+            script_recovered["jobs"],
+            script_recovered["chapters"],
         )
 
     @asynccontextmanager

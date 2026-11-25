@@ -21,6 +21,7 @@ from novelvoice_studio.ai.base import (
     BibleTimelineDraft,
     BibleTimelineResult,
     ChapterSceneResult,
+    ChapterScriptResult,
     ChapterSummaryResult,
     CharacterAnalysisResult,
     CharacterDraft,
@@ -28,6 +29,7 @@ from novelvoice_studio.ai.base import (
     ProviderHealth,
     SceneCharacterStateDraft,
     SceneDraft,
+    ScriptUnitDraft,
     SegmentAnalysisResult,
     SegmentDraft,
     TTSProvider,
@@ -635,6 +637,115 @@ class MockLLMProvider(LLMProvider):
             scenes=scenes,
             notes=["模拟模式分场仅用于流程验证，不代表真实分场结果。"],
             meta={"mock": True, "prompt_version": "mock", "scenes": len(scenes)},
+        )
+
+    # ---------------------------------------------------------- v0.5.0 P4
+
+    def adapt_scene_script(
+        self,
+        scene_text: str,
+        known_characters: list[dict],
+        context: dict | None = None,
+    ) -> ChapterScriptResult:
+        context = context or {}
+        text = scene_text or ""
+        if not text.strip():
+            return ChapterScriptResult(
+                meta={"mock": True, "prompt_version": "mock", "units": 0}
+            )
+        names = [
+            str(item.get("canonical_name") or item.get("name") or "").strip()
+            for item in known_characters
+            if str(item.get("canonical_name") or item.get("name") or "").strip()
+        ]
+        units: list[ScriptUnitDraft] = []
+        opening = re.compile(r"^\s*[“「『](?P<sound>[^”」』]{1,6})[”」』]的一声[，,]?")
+        quoted = re.compile(r"[“「『]([^”」』]+)[”」』]")
+        sentence = re.compile(r"[^\n。！？!?；;]+[。！？!?；;]?")
+        for match in sentence.finditer(text):
+            raw = match.group(0)
+            if not raw.strip():
+                continue
+            start = len(raw) - len(raw.lstrip())
+            end = len(raw.rstrip())
+            raw = raw[start:end]
+            leading = opening.match(raw)
+            if leading and re.fullmatch(r"[啪砰咚哗轰吱呀当叮咣]+", leading.group("sound")):
+                sound = leading.group("sound")
+                cue_text = leading.group(0).strip()
+                units.append(
+                    ScriptUnitDraft(
+                        unit_type="sfx",
+                        source_text=cue_text,
+                        text="",
+                        display_text=f"音效：{sound}",
+                        speaker_type="none",
+                        sfx={"label": sound, "description": "模拟模式音效 cue"},
+                        confidence=0.45,
+                        evidence=[cue_text],
+                    )
+                )
+                remainder = raw[leading.end() :].strip()
+                if remainder:
+                    unit_type = "inner_monologue" if any(
+                        marker in remainder for marker in ("心想", "心里", "暗想", "默念")
+                    ) else "narration"
+                    units.append(
+                        ScriptUnitDraft(
+                            unit_type=unit_type,
+                            source_text=remainder,
+                            text=remainder,
+                            display_text=remainder,
+                            speaker_type="narrator",
+                            confidence=0.4,
+                            evidence=[remainder[:80]],
+                        )
+                    )
+                continue
+            quotes = list(quoted.finditer(raw))
+            if quotes:
+                speaker_name = None
+                first_quote = quotes[0].start()
+                before = raw[:first_quote]
+                hits = [name for name in names if name in before or name in raw]
+                if hits:
+                    speaker_name = max(hits, key=len)
+                spoken = " ".join(
+                    item.group(1).strip() for item in quotes if item.group(1).strip()
+                )
+                if spoken:
+                    units.append(
+                        ScriptUnitDraft(
+                            unit_type="dialogue",
+                            source_text=raw,
+                            text=spoken,
+                            display_text=raw,
+                            speaker_type="character" if speaker_name else "unknown",
+                            speaker_name=speaker_name,
+                            confidence=0.4 if speaker_name else 0.2,
+                            evidence=[raw[:80]],
+                        )
+                    )
+                    continue
+            unit_type = "inner_monologue" if any(
+                marker in raw for marker in ("心想", "心里", "暗想", "默念")
+            ) else "narration"
+            units.append(
+                ScriptUnitDraft(
+                    unit_type=unit_type,
+                    source_text=raw,
+                    text=raw,
+                    display_text=raw,
+                    speaker_type="narrator",
+                    confidence=0.4,
+                    evidence=[raw[:80]],
+                )
+            )
+        return ChapterScriptResult(
+            units=units,
+            summary="模拟模式：按句子切分并标记对白/旁白/音效 cue，仅用于流程验证。",
+            notes=["模拟模式剧本仅用于流程验证，不代表真实改编质量。"],
+            meta={"mock": True, "prompt_version": "mock", "units": len(units)},
         )
 
     def synthesize_bible_timeline(

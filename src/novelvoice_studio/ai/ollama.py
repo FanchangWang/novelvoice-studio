@@ -20,6 +20,7 @@ from novelvoice_studio.ai.base import (
     BibleMergeResult,
     BibleTimelineResult,
     ChapterSceneResult,
+    ChapterScriptResult,
     ChapterSummaryResult,
     CharacterAnalysisResult,
     LLMProvider,
@@ -32,6 +33,7 @@ from novelvoice_studio.ai.prompts import (
     BIBLE_TIMELINE_PROMPT_VERSION,
     CHARACTER_PROMPT_VERSION,
     SCENE_PROMPT_VERSION,
+    SCRIPT_PROMPT_VERSION,
     SEGMENT_PROMPT_VERSION,
     SUMMARY_PROMPT_VERSION,
     SCHEMAS,
@@ -41,6 +43,7 @@ from novelvoice_studio.ai.prompts import (
     character_messages,
     repair_messages,
     scene_messages,
+    script_messages,
     segment_messages,
     summary_messages,
 )
@@ -356,4 +359,19 @@ class OllamaLLMProvider(LLMProvider):
             ChapterSceneResult,
             task="scenes",
             prompt_version=SCENE_PROMPT_VERSION,
+        )
+
+    # ---------------------------------------------------------- v0.5.0 P4
+
+    def adapt_scene_script(
+        self,
+        scene_text: str,
+        known_characters: list[dict[str, Any]],
+        context: dict[str, Any] | None = None,
+    ) -> ChapterScriptResult:
+        return self._structured(
+            script_messages(scene_text, known_characters, context),
+            ChapterScriptResult,
+            task="script",
+            prompt_version=SCRIPT_PROMPT_VERSION,
         )

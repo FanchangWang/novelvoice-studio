@@ -24,6 +24,9 @@ BIBLE_TIMELINE_PROMPT_VERSION = f"{BIBLE_PROMPT_VERSION}.timeline"
 # v0.5.0 P3 逐章分场与角色状态快照。窗口按片段编号完整覆盖。
 SCENE_PROMPT_VERSION = "v050.p3.scene.v1"
 
+# v0.5.0 P4 有声剧本。默认轻改编，source_text 必须按顺序覆盖场景原文。
+SCRIPT_PROMPT_VERSION = "v050.p4.script.v1"
+
 _JSON_RULES = """你必须只输出一个合法 JSON 对象，不要输出 Markdown、代码围栏、解释或前后缀文字。
 不得编造原文没有的事实。无法判断时使用 unknown，不要根据姓名刻板印象猜测性别或年龄。
 所有引文必须来自本次输入文本。"""
@@ -205,6 +208,52 @@ _SCENE_SCHEMA = """{
   ],
   "notes": ["需要人工确认的分场或状态疑点"]
 }"""
+
+
+_SCRIPT_SCHEMA = """{
+  "units": [
+    {
+      "unit_type": "narration|dialogue|inner_monologue|sfx|ambience|pause",
+      "source_text": "本单元覆盖的连续原文，必须逐字取自输入场景，按顺序拼接可覆盖全文",
+      "text": "实际送入 TTS 的文本；cue/pause 为空字符串",
+      "display_text": "界面展示文本；对白可只展示台词，音效可写“惊堂木重拍（啪）”",
+      "speaker_type": "narrator|character|unknown|none",
+      "speaker_name": "对白说话人的角色标准姓名；旁白/未知时为 null",
+      "emotion": "neutral|happy|excited|angry|sad|fearful|surprised|doubtful|sarcastic|tender|embarrassed|determined|tired",
+      "intensity": 1,
+      "delivery": "normal|whispering|shouting|crying|laughing|breathless|slow|hesitant",
+      "tts_instruction": "声音表演提示，不改变台词内容",
+      "speed": 1.0,
+      "pause_before_ms": 0,
+      "pause_after_ms": 250,
+      "sfx": {"label": "音效短标签", "description": "音效描述", "timing": "before|during|after", "intensity": 1},
+      "confidence": 0.0,
+      "evidence": [{"quote": "原文依据", "reason": "判断理由"}]
+    }
+  ],
+  "summary": "本场景有声剧本处理摘要，最多 120 字",
+  "notes": ["需要人工确认的说话人、原文对齐或表演疑点"]
+}"""
+
+_SCRIPT_SYSTEM = (
+    "你是中文小说的有声剧本编辑。把输入场景整理成适合多角色配音的单元序列。"
+    "默认执行轻改编：保留原文叙述顺序、事实、人物关系和台词，不新增情节，不改写措辞。"
+    "\n规则：\n"
+    "1. source_text 必须逐字取自输入场景；units 按原文顺序排列，相邻单元的 source_text "
+    "必须连续衔接，全部 units 合起来（除空白外）完整覆盖输入场景。不得跳段、重叠或遗漏。\n"
+    "2. 一段原文可以拆成多个单元。若省略“他说/她道/问道”等纯阅读提示，"
+    "仍要把这些字放进相邻单元的 source_text 覆盖范围，只让 text 不朗读它们。\n"
+    "3. 引号内的直接台词用 dialogue；明确标出的内心想法用 inner_monologue；"
+    "其余用 narration。普通叙述与内心独白默认 speaker_type=narrator。\n"
+    "4. dialogue 的 speaker_name 只能是角色注册表中的标准姓名；"
+    "证据不足时用 unknown，并在 notes 说明，不得猜测。\n"
+    "5. 拟声词、拍击声等可以拆成 sfx cue；雨声、风声等持续环境声用 ambience；"
+    "明确停顿用 pause。cue/pause 不进入 TTS，text 为空，信息写 display_text 与 sfx。\n"
+    "6. 长句按呼吸和语义切分，但不得改变句意；emotion/delivery 没有依据时使用 neutral/normal，"
+    "置信度保守。\n"
+    "7. 不得输出原文之外的新增旁白、解释或总结。\n"
+    f"\n{_JSON_RULES}\n输出结构：\n{_SCRIPT_SCHEMA}"
+)
 
 
 def _system(role: str) -> dict[str, str]:
@@ -429,6 +478,34 @@ def scene_messages(
     return [_system(system), _user(user)]
 
 
+def script_messages(
+    scene_text: str,
+    known_characters: list[dict[str, Any]],
+    context: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    context = context or {}
+    scene = context.get("scene") or {}
+    chunk = context.get("chunk") or {}
+    speaker_states = context.get("speaker_states") or []
+    user = (
+        f"书籍：{context.get('book_title', '未知')}\n"
+        f"章节：{context.get('chapter_title', '')}\n"
+        f"场景：{scene.get('title') or '未命名'}；地点={scene.get('location') or '未知'}；"
+        f"时间={scene.get('story_time_label') or '未知'}；"
+        f"time_mode={scene.get('time_mode') or 'unknown'}\n"
+        f"场景摘要（仅供指代，不可当作原文）：{scene.get('summary') or '无'}\n"
+        f"改编档位：{context.get('adaptation_level') or 'light'}\n"
+        f"场景分块：{chunk.get('index', 1)}/{chunk.get('total', 1)}\n\n"
+        f"角色注册表：\n{_registry(known_characters)}\n\n"
+        f"本场景角色状态（用于说话人、语气和声音提示）：\n"
+        f"{json.dumps(speaker_states, ensure_ascii=False, indent=2)}\n\n"
+        "请把下面的场景原文整理为有声剧本单元。再次强调："
+        "units 的 source_text 必须按顺序连续覆盖全文，只允许忽略空白。\n\n"
+        f"<scene>\n{scene_text}\n</scene>"
+    )
+    return [_system(_SCRIPT_SYSTEM), _user(user)]
+
+
 def repair_messages(
     invalid_output: str,
     error: str,
@@ -455,4 +532,5 @@ SCHEMAS = {
     "bible_merge": _BIBLE_MERGE_SCHEMA,
     "bible_timeline": _BIBLE_TIMELINE_SCHEMA,
     "scenes": _SCENE_SCHEMA,
+    "script": _SCRIPT_SCHEMA,
 }

@@ -630,6 +630,105 @@ class ChapterSceneResult(BaseModel):
         return _coerce_str_list(value)
 
 
+class ScriptUnitDraft(BaseModel):
+    """P4 单个有声剧本单元。
+
+    ``source_text`` 是单元覆盖的连续原文范围，``text`` 是实际送入 TTS 的文本。
+    轻改编可以省略阅读提示，但 ``source_text`` 仍应覆盖被省略的部分，以便
+    和原文对照。cue/pause 的 ``text`` 为空。
+    """
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    unit_type: str = Field(
+        default="narration",
+        validation_alias=AliasChoices("unit_type", "type", "segment_type"),
+    )
+    source_text: str = Field(
+        min_length=1,
+        validation_alias=AliasChoices(
+            "source_text", "source_quote", "source", "quote", "original_text"
+        ),
+    )
+    text: str | None = None
+    display_text: str | None = None
+    speaker_type: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("speaker_type", "speaker_kind"),
+    )
+    speaker_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("speaker_name", "speaker", "character_name"),
+    )
+    emotion: str = "neutral"
+    intensity: int = Field(default=1, ge=1, le=3)
+    delivery: str = "normal"
+    tts_instruction: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("tts_instruction", "instruction", "performance"),
+    )
+    speed: float = 1.0
+    pause_before_ms: int = 0
+    pause_after_ms: int = 250
+    sfx: dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("sfx", "sfx_json", "cue"),
+    )
+    confidence: float = 0.0
+    evidence: list[EvidenceDraft] = Field(default_factory=list)
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def _evidence_before(cls, value: object) -> object:
+        return _coerce_evidence(value)
+
+    @field_validator("sfx", mode="before")
+    @classmethod
+    def _sfx_before(cls, value: object) -> object:
+        if isinstance(value, str):
+            return {"label": value}
+        return value or {}
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _clamp_confidence(cls, value: object) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, number))
+
+    @field_validator("speed", mode="before")
+    @classmethod
+    def _coerce_speed(cls, value: object) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 1.0
+        return max(0.5, min(2.0, number))
+
+    @field_validator("pause_before_ms", "pause_after_ms", mode="before")
+    @classmethod
+    def _coerce_pause(cls, value: object) -> int:
+        try:
+            number = int(float(value))
+        except (TypeError, ValueError):
+            return 0
+        return max(0, min(5000, number))
+
+
+class ChapterScriptResult(BaseModel):
+    units: list[ScriptUnitDraft] = Field(default_factory=list)
+    summary: str | None = None
+    notes: list[str] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def _notes_before(cls, value: object) -> object:
+        return _coerce_str_list(value)
+
+
 class LLMProvider(ABC):
     name = "llm"
     model = ""
@@ -695,6 +794,15 @@ class LLMProvider(ABC):
     ) -> ChapterSceneResult:
         """P3 单章/单窗口分场与角色状态；输入片段编号必须完整覆盖。"""
         raise NotImplementedError("当前 LLM Provider 不支持分场分析")
+
+    def adapt_scene_script(
+        self,
+        scene_text: str,
+        known_characters: list[dict[str, Any]],
+        context: dict[str, Any] | None = None,
+    ) -> ChapterScriptResult:
+        """P4 把单个场景（或场景分块）做成轻改编有声剧本。"""
+        raise NotImplementedError("当前 LLM Provider 不支持有声剧本生成")
 
     def unload_model(self) -> None:
         return None
