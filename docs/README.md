@@ -26,6 +26,7 @@
 ## 阶段报告
 
 - [阶段 0 POC 报告](reports/POC_REPORT.md)：硬件环境、模型来源、结构化输出与三音色试听。
+- [P2 全书角色圣经实施报告](reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md)：角色、别名、关系、人物弧、剧情时间线、异常收件箱与选定章节重跑。
 - [阶段 2 验收报告](reports/STAGE2_REPORT.md)：本机 Ollama 分析、角色/片段审核闭环。
 - [阶段 3 验收报告](reports/STAGE3_REPORT.md)：音色设计、逐段生成、版本回退与引擎服务协议。
 - [阶段 3 音质计划](reports/STAGE3_AUDIO_QUALITY_PLAN.md)：实验矩阵与退出标准。
@@ -41,6 +42,9 @@
 
 阶段 0 的听感 gate 是有条件通过；阶段 3 首轮 gate 不通过，3B 复听通过，3C 接受“参考音先去齿、输出不处理”的链路。功能可用不代表音质已验收，模型许可证核对也仍未完成。详见各报告与 [项目 README](../README.md)。
 
-当前版本仍为 0.4.0；0.5.0 主链重构已完成 P1 数据层（迁移 `9f3c2a7b5d10`），
-AI 生产链与 UI 尚在实施中，原阶段 4 暂停。设计与迁移口径见
-[v0.5.0 AI 生产链重构](design/V0_5_0_AI_PRODUCTION_CHAIN_2026-11-26.md)。
+当前版本仍为 0.4.0；0.5.0 主链重构已完成 P1 数据层（迁移 `9f3c2a7b5d10`）
+与 P2 全书角色圣经后端（Mock 与真实本机 Ollama 均通过），
+AI 生产链其余环节与 UI 尚在实施中，原阶段 4 暂停。设计与迁移口径见
+[v0.5.0 AI 生产链重构](design/V0_5_0_AI_PRODUCTION_CHAIN_2026-11-26.md)，
+P2 结果与限制见
+[P2 实施报告](reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md)。

@@ -15,6 +15,12 @@ SEGMENT_PROMPT_VERSION = f"{PROMPT_VERSION}.segments"
 SUMMARY_PROMPT_VERSION = f"{PROMPT_VERSION}.summary"
 REPAIR_PROMPT_VERSION = f"{PROMPT_VERSION}.repair"
 
+# v0.5.0 P2 全书角色圣经。分遍处理，禁止把整本书放进一次调用。
+BIBLE_PROMPT_VERSION = "v050.p2.bible.v3"
+BIBLE_CHARACTER_PROMPT_VERSION = f"{BIBLE_PROMPT_VERSION}.characters"
+BIBLE_MERGE_PROMPT_VERSION = f"{BIBLE_PROMPT_VERSION}.merge"
+BIBLE_TIMELINE_PROMPT_VERSION = f"{BIBLE_PROMPT_VERSION}.timeline"
+
 _JSON_RULES = """你必须只输出一个合法 JSON 对象，不要输出 Markdown、代码围栏、解释或前后缀文字。
 不得编造原文没有的事实。无法判断时使用 unknown，不要根据姓名刻板印象猜测性别或年龄。
 所有引文必须来自本次输入文本。"""
@@ -77,6 +83,89 @@ _SUMMARY_SCHEMA = """{
   "summary": "本章客观摘要，150-300 字",
   "key_events": ["关键事件"],
   "characters": ["本章出现的角色标准姓名"]
+}"""
+
+_BIBLE_CHARACTER_SCHEMA = """{
+  "characters": [
+    {
+      "name": "标准姓名（优先复用已知角色名）",
+      "aliases": [
+        {"name": "全名、简称、称谓或绰号", "confidence": 0.0, "basis": "explicit|inferred|unknown"}
+      ],
+      "gender": "male|female|other|unknown",
+      "gender_basis": "explicit|inferred|unknown",
+      "age_range": "child|teenager|young_adult|adult|middle_aged|elderly|unknown",
+      "age_basis": "explicit|inferred|unknown",
+      "character_type": "human|animal|non_human|unknown",
+      "role_tier": "protagonist|major|minor|extra|unknown",
+      "role_hint": "本章中的叙事作用，最多 40 字",
+      "identity_description": "身份、职业或叙事作用，最多 80 字",
+      "personality": ["性格标签"],
+      "personality_desc": "性格简述",
+      "appearance_desc": "外貌简述",
+      "voice_description": "适合 TTS 的声音描述，例如年龄感、音高、音色、语速",
+      "arc_note": "本章所处的人生阶段、身心状态或明显变化，最多 80 字",
+      "evidence": [{"quote": "原文证据", "reason": "为什么这样判断"}],
+      "confidence": 0.0,
+      "is_provisional": false
+    }
+  ],
+  "relationships": [
+    {
+      "source_name": "角色标准姓名",
+      "target_name": "角色标准姓名",
+      "relationship_type": "亲属|朋友|敌对|师徒|同事|其他具体关系",
+      "description": "关系说明",
+      "evidence": [{"quote": "原文证据", "reason": "依据"}],
+      "confidence": 0.0,
+      "is_provisional": false
+    }
+  ],
+  "timeline": {
+    "story_time_label": "本章故事发生时间，例如“十年前”“雨夜次日”；无法判断为 null",
+    "time_mode": "present|flashback|flashforward|dream|unknown",
+    "note": "倒叙、回忆、插叙或伏笔的说明",
+    "confidence": 0.0
+  }
+}"""
+
+_BIBLE_MERGE_SCHEMA = """{
+  "characters": [
+    {
+      "name": "全书标准姓名",
+      "merge_names": ["需要并入本角色的其他候选名或别名，可为空"],
+      "role_tier": "protagonist|major|minor|extra|unknown",
+      "overview": "该角色全书概述，最多 160 字",
+      "arcs": [
+        {
+          "label": "阶段名称，例如“幼年”“黑化后”",
+          "age_stage": "child|teenager|young_adult|adult|middle_aged|elderly|unknown",
+          "chapter_start": 1,
+          "chapter_end": 3,
+          "story_time_start": "剧情时间起点，可为 null",
+          "story_time_end": "剧情时间终点，可为 null",
+          "summary": "该阶段变化，最多 100 字",
+          "voice_hint": "该阶段声音倾向，可为 null",
+          "confidence": 0.0
+        }
+      ],
+      "confidence": 0.0
+    }
+  ],
+  "notes": ["需要人工确认的疑点"]
+}"""
+
+_BIBLE_TIMELINE_SCHEMA = """{
+  "narrative_mode": "linear|nonlinear|unknown",
+  "chapters": [
+    {
+      "sequence": 1,
+      "story_time_label": "该章故事发生时间，可为 null",
+      "story_order": 1,
+      "time_mode": "present|flashback|flashforward|dream|unknown"
+    }
+  ],
+  "notes": ["时间线疑点"]
 }"""
 
 
@@ -165,6 +254,98 @@ def summary_messages(
     return [_system(system), _user(user)]
 
 
+def bible_character_messages(
+    text: str,
+    known_characters: list[dict[str, Any]],
+    context: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    context = context or {}
+    system = (
+        "你是中文小说的全书角色编辑。当前只处理一章（或其中一段窗口），"
+        "但目标是建立全书角色圣经，因此要记录角色在本章所处的人生阶段、身心状态"
+        "与明显变化，供后续全局归并使用。"
+        "\n规则：\n"
+        "1. 只提取有明确叙事作用的主要人物和重要配角，不要为路人、群体称谓或普通名词创建角色。\n"
+        "2. 合并本章出现的全名、简称、称谓与绰号；证据不足时性别、年龄、类型设为 unknown。\n"
+        "3. 不得根据姓名刻板印象推断性别或年龄；不得把上一章摘要当作本章原文证据。\n"
+        "4. age_range 表示角色在本章所处的人生阶段；arc_note 记录本章状态/变化，"
+        "例如幼年、受伤、紧张、黑化后。不要用全书最终年龄覆盖本章状态。\n"
+        "5. role_tier 表示全书层级判断；本章无法判断时使用 unknown。\n"
+        "6. 关系两端必须使用角色标准姓名；只记录本章有证据的关系。\n"
+        "7. timeline 记录本章故事发生时间与叙事模式（顺叙/倒叙/回忆/梦境）。"
+        "无法判断时用 unknown，不要按章节号臆测。"
+        f"\n{_JSON_RULES}\n输出结构：\n{_BIBLE_CHARACTER_SCHEMA}"
+    )
+    window = context.get("window") or {}
+    user = (
+        f"书籍：{context.get('book_title', '未知')}\n"
+        f"当前章节：{context.get('chapter_title', '')}"
+        f"（序号 {context.get('chapter_sequence', '?')}）\n"
+        f"窗口：{window.get('index', 1)}/{window.get('total', 1)}\n"
+        f"本章已生成摘要（仅供指代参考，不可当作原文证据）："
+        f"{context.get('chapter_summary') or '无'}\n"
+        f"上一章摘要（仅供指代参考，不可当作原文证据）："
+        f"{context.get('previous_summary') or '无'}\n\n"
+        f"已知角色注册表（标准姓名与别名，必须优先复用）：\n"
+        f"{_registry(known_characters)}\n\n"
+        "请分析下面这段原文，输出本章/本窗口的人物、关系与时间线观察。\n\n"
+        f"<chapter>\n{text}\n</chapter>"
+    )
+    return [_system(system), _user(user)]
+
+
+def bible_merge_messages(
+    candidates: list[dict[str, Any]],
+    context: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    context = context or {}
+    system = (
+        "你是中文小说的全书角色圣经归并编辑。输入是按章节抽取、已经过确定性聚类的"
+        "候选角色，不是整本原文。你的任务是：只在有明确依据时合并同一人物；"
+        "判断全书角色层级；根据角色在各章的年龄阶段/状态变化整理人物弧。"
+        "\n规则：\n"
+        "1. 不要凭空创造候选表中没有的角色；merge_names 只能来自候选表或别名。\n"
+        "2. 证据不足时保留为不同角色，并把疑点写入 notes，不要强行合并。\n"
+        "3. 人物弧按剧情时间排序；chapter_start/chapter_end 使用章节序号。"
+        "倒叙、回忆中的状态不能被当成当前章节状态。\n"
+        "4. 同一角色可以有多个阶段（幼年、青年、老年、黑化后等）；没有阶段变化时只给一个阶段。\n"
+        "5. role_tier 表示全书层级：protagonist 主角、major 重要配角、minor 次要角色、"
+        "extra 路人级但需要声音的角色、unknown 无法判断。\n"
+        "6. notes 只记录候选表内的归并或阶段疑点；不得补充候选表以外的"
+        "人物关系、亲属称谓、具体事件或时间线结论。\n"
+        f"\n{_JSON_RULES}\n输出结构：\n{_BIBLE_MERGE_SCHEMA}"
+    )
+    user = (
+        f"书籍：{context.get('book_title', '未知')}\n"
+        f"总章节数：{context.get('total_chapters', '?')}\n"
+        f"本批候选角色（可能只是全书的一部分）：\n"
+        f"{json.dumps(candidates, ensure_ascii=False, indent=2)}"
+    )
+    return [_system(system), _user(user)]
+
+
+def bible_timeline_messages(
+    chapters: list[dict[str, Any]],
+    context: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    context = context or {}
+    system = (
+        "你是中文小说的剧情时间线编辑。输入是章节摘要、章节顺序和已有的时间提示，"
+        "不是整本原文。请判断全书叙事模式，并为每章给出相对剧情时间顺序。"
+        "\n规则：\n"
+        "1. 不得把章节顺序直接当作剧情顺序；倒叙、回忆、插叙要按故事发生时间排序。\n"
+        "2. story_order 使用 1..N 的整数，1 表示剧情时间最早；无法判断时给 null。\n"
+        "3. 不编造摘要中没有的时间信息；不确定时 time_mode=unknown、story_time_label=null。\n"
+        "4. notes 只写需要作者确认的时间线疑点。\n"
+        f"\n{_JSON_RULES}\n输出结构：\n{_BIBLE_TIMELINE_SCHEMA}"
+    )
+    user = (
+        f"书籍：{context.get('book_title', '未知')}\n"
+        f"章节时间线材料：\n{json.dumps(chapters, ensure_ascii=False, indent=2)}"
+    )
+    return [_system(system), _user(user)]
+
+
 def repair_messages(
     invalid_output: str,
     error: str,
@@ -187,4 +368,7 @@ SCHEMAS = {
     "characters": _CHARACTER_SCHEMA,
     "segments": _SEGMENT_SCHEMA,
     "summary": _SUMMARY_SCHEMA,
+    "bible_characters": _BIBLE_CHARACTER_SCHEMA,
+    "bible_merge": _BIBLE_MERGE_SCHEMA,
+    "bible_timeline": _BIBLE_TIMELINE_SCHEMA,
 }

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from novelvoice_studio.ai.registry import ProviderRegistry
 from novelvoice_studio.config import Settings
 from novelvoice_studio.services.analysis import AnalysisService
+from novelvoice_studio.services.bible import BibleService
 from novelvoice_studio.services.books import BookService
 from novelvoice_studio.services.chapter_ops import ChapterService
 from novelvoice_studio.services.character_ops import CharacterService
@@ -94,6 +95,14 @@ def get_voice_service(
     return VoiceService(settings, session, registry)
 
 
+def get_bible_service(
+    settings: Settings = Depends(get_app_settings),
+    factory: sessionmaker[Session] = Depends(get_session_factory),
+    registry: ProviderRegistry = Depends(get_registry),
+) -> BibleService:
+    return BibleService(settings, factory, registry)
+
+
 def get_audio_service(
     settings: Settings = Depends(get_app_settings),
     session: Session = Depends(get_session),
@@ -112,5 +121,6 @@ ImportServiceDep = Annotated[ImportService, Depends(get_import_service)]
 CharacterServiceDep = Annotated[CharacterService, Depends(get_character_service)]
 SegmentServiceDep = Annotated[SegmentService, Depends(get_segment_service)]
 AnalysisServiceDep = Annotated[AnalysisService, Depends(get_analysis_service)]
+BibleServiceDep = Annotated[BibleService, Depends(get_bible_service)]
 VoiceServiceDep = Annotated[VoiceService, Depends(get_voice_service)]
 AudioServiceDep = Annotated[AudioService, Depends(get_audio_service)]

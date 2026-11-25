@@ -37,6 +37,8 @@ class BookSummary(BaseModel):
     description: str | None
     language: str
     status: str
+    bible_status: str = "not_started"
+    production_status: str = "not_started"
     source_encoding: str | None
     source_char_count: int
     chapter_count: int

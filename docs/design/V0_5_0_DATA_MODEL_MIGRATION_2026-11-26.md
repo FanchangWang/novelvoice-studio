@@ -232,6 +232,8 @@ review_items ──(多态)──> bible / character / scene / script_unit / voi
 - `summary` Text，可空
 - `content_json` JSON，默认 `{}`
   - 原始归一化角色/关系/世界观结果，便于审计与重建
+  - 实现补充：`chapter_observations`、`relationship_observations`、`chapter_timelines`
+    保存章节级观察，供选定章节重跑时复用未重跑章节；失败重跑也不丢已确认结果
 - `timeline_json` JSON，默认 `{}`
   - 剧情时间线、叙事模式、关键事件
 - `confidence` Float，默认 0.0

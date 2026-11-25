@@ -20,6 +20,9 @@ AgeRange = Literal[
     "child", "teenager", "young_adult", "adult", "middle_aged", "elderly", "unknown"
 ]
 CharacterType = Literal["human", "animal", "non_human", "unknown"]
+RoleTier = Literal["protagonist", "major", "minor", "extra", "unknown"]
+TimeMode = Literal["present", "flashback", "flashforward", "dream", "unknown"]
+NarrativeMode = Literal["linear", "nonlinear", "unknown"]
 SegmentType = Literal["narration", "dialogue", "inner_monologue", "unknown"]
 SpeakerType = Literal["character", "narrator", "unknown"]
 Emotion = Literal[
@@ -273,6 +276,128 @@ class ChapterSummaryResult(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
+class BibleTimelineDraft(BaseModel):
+    """单章在剧情时间线上的提示；不是章节顺序。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    story_time_label: str | None = None
+    time_mode: TimeMode = "unknown"
+    note: str | None = None
+    confidence: float = 0.0
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _clamp_confidence(cls, value: object) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, number))
+
+
+class BibleCharacterDraft(CharacterDraft):
+    """单章的人物观察：既含全书身份，也含本章所处的年龄/心理阶段。"""
+
+    role_tier: RoleTier = "unknown"
+    role_hint: str | None = None
+    arc_note: str | None = None
+
+
+class BibleChapterResult(BaseModel):
+    characters: list[BibleCharacterDraft] = Field(default_factory=list)
+    relationships: list[RelationshipDraft] = Field(default_factory=list)
+    timeline: BibleTimelineDraft = Field(default_factory=BibleTimelineDraft)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class BibleArcDraft(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    label: str = "未分阶段"
+    age_stage: AgeRange = Field(
+        default="unknown", validation_alias=AliasChoices("age_stage", "age_range")
+    )
+    chapter_start: int | None = Field(
+        default=None, validation_alias=AliasChoices("chapter_start", "start_sequence")
+    )
+    chapter_end: int | None = Field(
+        default=None, validation_alias=AliasChoices("chapter_end", "end_sequence")
+    )
+    story_time_start: str | None = None
+    story_time_end: str | None = None
+    summary: str | None = None
+    voice_hint: str | None = None
+    confidence: float = 0.0
+
+    @field_validator("age_stage", mode="before")
+    @classmethod
+    def _age_alias(cls, value: object) -> object:
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            return AGE_GROUP_ALIASES.get(lowered, lowered)
+        return value
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _clamp_confidence(cls, value: object) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, number))
+
+
+class BibleMergeCharacterDraft(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    name: str
+    merge_names: list[str] = Field(default_factory=list)
+    role_tier: RoleTier = "unknown"
+    overview: str | None = None
+    arcs: list[BibleArcDraft] = Field(default_factory=list)
+    confidence: float = 0.0
+
+    @field_validator("merge_names", mode="before")
+    @classmethod
+    def _merge_names_before(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [value]
+        return value
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _clamp_confidence(cls, value: object) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, number))
+
+
+class BibleMergeResult(BaseModel):
+    characters: list[BibleMergeCharacterDraft] = Field(default_factory=list)
+    summary: str | None = None
+    notes: list[str] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
+class BibleTimelineChapterDraft(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    sequence: int
+    story_time_label: str | None = None
+    story_order: int | None = None
+    time_mode: TimeMode = "unknown"
+
+
+class BibleTimelineResult(BaseModel):
+    narrative_mode: NarrativeMode = "unknown"
+    chapters: list[BibleTimelineChapterDraft] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
 class LLMProvider(ABC):
     name = "llm"
     model = ""
@@ -304,6 +429,31 @@ class LLMProvider(ABC):
     def summarize_chapter(
         self, text: str, known_characters: list[dict[str, Any]]
     ) -> ChapterSummaryResult: ...
+
+    def extract_bible_characters(
+        self,
+        text: str,
+        known_characters: list[dict[str, Any]],
+        context: dict[str, Any] | None = None,
+    ) -> BibleChapterResult:
+        """P2 单章/单窗口人物观察。默认不支持，由具体 Provider 实现。"""
+        raise NotImplementedError("当前 LLM Provider 不支持全书角色圣经分析")
+
+    def merge_bible_candidates(
+        self,
+        candidates: list[dict[str, Any]],
+        context: dict[str, Any] | None = None,
+    ) -> BibleMergeResult:
+        """P2 全局归并：只在确定性聚类后处理歧义、层级与人物弧。"""
+        raise NotImplementedError("当前 LLM Provider 不支持角色圣经归并")
+
+    def synthesize_bible_timeline(
+        self,
+        chapters: list[dict[str, Any]],
+        context: dict[str, Any] | None = None,
+    ) -> BibleTimelineResult:
+        """P2 剧情时间线综合；输入是章节摘要，不是整本书原文。"""
+        raise NotImplementedError("当前 LLM Provider 不支持剧情时间线综合")
 
     def unload_model(self) -> None:
         return None

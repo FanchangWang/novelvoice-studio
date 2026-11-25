@@ -12,6 +12,14 @@ import soundfile as sf
 
 from novelvoice_studio.ai.base import (
     AudioResult,
+    BibleArcDraft,
+    BibleChapterResult,
+    BibleCharacterDraft,
+    BibleMergeCharacterDraft,
+    BibleMergeResult,
+    BibleTimelineChapterDraft,
+    BibleTimelineDraft,
+    BibleTimelineResult,
     ChapterSummaryResult,
     CharacterAnalysisResult,
     CharacterDraft,
@@ -25,7 +33,181 @@ from novelvoice_studio.ai.base import (
 )
 
 _NAME_HINT = re.compile(r"([\u4e00-\u9fa5]{2,4})(?:说|道|问|答|喊|叫|笑|叹|想)")
+_NAME_TAIL = (
+    r"(?=[，。！？；：、“”「」『』\s]|说|道|问|答|喊|叫|笑|叹|想|把|看|走|站|坐|"
+    r"摸|推|拿|摘|转|低|皱|点|摇|沉|愣|举|回|望|心|没|忽|终)"
+)
+_BIBLE_NAME_HINT = re.compile(
+    r"(?:^|(?<=[，。！？；：“”「」『』\s]))"
+    r"([赵钱孙李周吴郑王冯陈蒋沈韩杨朱秦许何吕施张孔曹严华金魏陶姜谢邹喻柏窦章"
+    r"苏潘葛范彭郎鲁韦马苗方俞任袁柳鲍史唐薛雷贺倪汤罗毕郝安常傅齐康伍余顾孟"
+    r"黄穆萧尹姚邵汪毛狄米贝明戴谈宋庞熊纪舒屈项董梁杜阮蓝闵席季贾路江童颜郭"
+    r"梅盛林钟徐邱骆高夏蔡田樊胡凌霍虞万柯卢莫房解应宗丁宣邓郁单杭洪包诸左石"
+    r"崔吉龚程邢裴陆荣翁荀羊惠甄曲封芮储靳段富焦巴牧山谷侯全班仰秋仲伊宫宁仇"
+    r"甘厉祖武符刘景詹龙叶幸黎白怀蒲从索赖卓屠蒙池乔苍闻党翟谭劳姬申扶冉雍桑"
+    r"桂牛寿通边燕浦尚农温庄晏柴瞿阎慕连茹艾鱼容向古易慎戈廖终居衡步耿满弘匡"
+    r"国文寇广禄欧沃利蔚越隆师巩聂融冷辛简饶曾沙丰巢关相查荆红游竺权盖益桓]"
+    r"|阿|小|老)"
+    r"([\u4e00-\u9fa5]{1,2})"
+    + _NAME_TAIL
+)
+_ALIAS_HINT = re.compile(
+    r"(?:叫|称作|人称|绰号是|绰号叫)(?:他|她|它)?"
+    r"([\u4e00-\u9fa5]{1,3})(?=[，。！？；、“”「」『』\s]|$)"
+)
+_MOCK_NAME_SUFFIXES = set("说道问答喊叫笑叹想把看走站坐摸推拿摘转低皱点摇沉愣举回望心没忽终")
+_MOCK_NAME_STOPWORDS = {
+    "两人",
+    "众人",
+    "有人",
+    "自己",
+    "对方",
+    "声音",
+    "门外",
+    "屋里",
+    "街坊",
+    "熟人",
+    "门灯",
+    "照片",
+    "旧城",
+    "木盒",
+    "钥匙",
+    "三年前",
+    "十年前",
+    "多年前",
+    "谁",
+    "至今",
+    "想起",
+    "忽然",
+    "终于",
+    "没有",
+    "林间",
+    "白衣",
+    "白天",
+    "石头",
+    "高山",
+    "流水",
+    "马上",
+    "方向",
+}
+_AGE_MARKER = re.compile(
+    r"([一二三四五六七八九十百\d]{1,4})岁|"
+    r"(幼年|小时候|童年|少年|青年|中年|老年|老人)"
+)
+_CHINESE_DIGITS = {
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+_STAGE_LABELS = {
+    "child": "幼年",
+    "teenager": "少年",
+    "young_adult": "青年",
+    "adult": "成年",
+    "middle_aged": "中年",
+    "elderly": "老年",
+    "unknown": "未分阶段",
+}
 _QUOTE_MARKERS = ("「", "“", "『", '"')
+
+
+def _chinese_number(raw: str) -> int | None:
+    raw = raw.strip()
+    if not raw:
+        return None
+    if raw.isdigit():
+        return int(raw)
+    if "百" in raw:
+        left, _, right = raw.partition("百")
+        hundreds = _CHINESE_DIGITS.get(left, 1) if left else 1
+        rest = 0
+        if right:
+            tens, _, units = right.partition("十")
+            rest = (_CHINESE_DIGITS.get(tens, 1) if tens else 1) * 10 if "十" in right else _CHINESE_DIGITS.get(right, 0)
+            if "十" in right and units:
+                rest += _CHINESE_DIGITS.get(units, 0)
+        return hundreds * 100 + rest
+    if "十" in raw:
+        left, _, right = raw.partition("十")
+        tens = _CHINESE_DIGITS.get(left, 1) if left else 1
+        units = _CHINESE_DIGITS.get(right, 0) if right else 0
+        return tens * 10 + units
+    return _CHINESE_DIGITS.get(raw)
+
+
+def _age_stage_for_number(age: int) -> str:
+    if age <= 12:
+        return "child"
+    if age <= 17:
+        return "teenager"
+    if age <= 35:
+        return "young_adult"
+    if age <= 55:
+        return "adult"
+    if age <= 70:
+        return "middle_aged"
+    return "elderly"
+
+
+def _mock_age_stage(text: str, name: str) -> str:
+    """Mock 用：把本章年龄标记关联到最近出现的角色名。"""
+    positions = [match.start() for match in re.finditer(re.escape(name), text)]
+    if not positions:
+        return "unknown"
+    for match in _AGE_MARKER.finditer(text):
+        earlier = [position for position in positions if position <= match.start()]
+        if not earlier:
+            continue
+        previous = max(earlier)
+        # 只接受角色名之后 80 字内的年龄/阶段标记，避免跨段误关联。
+        if match.start() - previous > 80:
+            continue
+        if match.group(1):
+            number = _chinese_number(match.group(1))
+            if number is not None:
+                return _age_stage_for_number(number)
+        label = match.group(2) or ""
+        if label in {"幼年", "小时候", "童年"}:
+            return "child"
+        if label == "少年":
+            return "teenager"
+        if label == "青年":
+            return "young_adult"
+        if label == "中年":
+            return "middle_aged"
+        if label in {"老年", "老人"}:
+            return "elderly"
+    return "unknown"
+
+
+def _mock_name_candidate(raw: str) -> str:
+    candidate = raw.strip()
+    while candidate and candidate[-1] in _MOCK_NAME_SUFFIXES:
+        candidate = candidate[:-1]
+    return candidate
+
+
+def _mock_timeline(text: str) -> BibleTimelineDraft:
+    label = None
+    mode = "present"
+    for marker in ("十年前", "多年前", "很多年前", "当年", "回忆", "想起", "梦中", "梦里"):
+        if marker in text:
+            label = marker
+            mode = "dream" if marker in {"梦中", "梦里"} else "flashback"
+            break
+    return BibleTimelineDraft(
+        story_time_label=label,
+        time_mode=mode,
+        note="模拟模式时间线提示，不代表真实分析结论。" if label else None,
+        confidence=0.55 if label else 0.4,
+    )
 
 
 def _tone_wav(text: str, *, frequency: float, duration_ms: int, sample_rate: int = 16000) -> AudioResult:
@@ -149,6 +331,250 @@ class MockLLMProvider(LLMProvider):
         return ChapterSummaryResult(
             summary=summary,
             characters=names,
+            meta={"mock": True, "prompt_version": "mock"},
+        )
+
+    # ---------------------------------------------------------- v0.5.0 P2
+
+    def extract_bible_characters(
+        self, text: str, known_characters: list[dict], context: dict | None = None
+    ) -> BibleChapterResult:
+        known: dict[str, list[str]] = {}
+        for item in known_characters:
+            name = str(item.get("canonical_name") or item.get("name") or "").strip()
+            if not name:
+                continue
+            aliases = [
+                str(alias.get("name") if isinstance(alias, dict) else alias).strip()
+                for alias in (item.get("aliases") or [])
+                if (alias.get("name") if isinstance(alias, dict) else alias)
+            ]
+            known[name] = [alias for alias in aliases if alias]
+        names: list[str] = []
+        for name, aliases in known.items():
+            if name in text or any(alias in text for alias in aliases):
+                names.append(name)
+        counts: dict[str, int] = {}
+        for match in _BIBLE_NAME_HINT.finditer(text):
+            candidate = _mock_name_candidate(match.group(1) + match.group(2))
+            if (
+                len(candidate) < 2
+                or candidate in _MOCK_NAME_STOPWORDS
+                or candidate in names
+            ):
+                continue
+            counts[candidate] = max(counts.get(candidate, 0), text.count(candidate))
+        for candidate, count in sorted(counts.items(), key=lambda item: (-item[1], item[0])):
+            # Mock 无法可靠区分只出现一次的人名与普通短语，至少出现两次才建档。
+            if count >= 2:
+                names.append(candidate)
+        if not names:
+            return BibleChapterResult(
+                meta={"mock": True, "prompt_version": "mock", "characters": 0}
+            )
+
+        occurrences: list[tuple[int, str]] = []
+        for name in names:
+            occurrences.extend((match.start(), name) for match in re.finditer(re.escape(name), text))
+        occurrences.sort()
+        aliases_by_name: dict[str, list[str]] = {name: [] for name in names}
+        for match in _ALIAS_HINT.finditer(text):
+            alias = match.group(1).strip()
+            if not alias:
+                continue
+            earlier = [
+                item
+                for item in occurrences
+                if item[0] <= match.start() and match.start() - item[0] <= 120
+            ]
+            if not earlier:
+                continue
+            owner = max(
+                earlier,
+                key=lambda item: (
+                    len(set(alias) & set(item[1])) > 0,
+                    item[0],
+                ),
+            )[1]
+            if alias != owner and alias not in aliases_by_name[owner]:
+                aliases_by_name[owner].append(alias)
+        for name, aliases in known.items():
+            if name in aliases_by_name:
+                aliases_by_name[name] = list(
+                    dict.fromkeys([*aliases, *aliases_by_name[name]])
+                )
+        alias_owner = {
+            alias: name
+            for name, aliases in aliases_by_name.items()
+            for alias in aliases
+        }
+        names = [
+            name
+            for name in names
+            if name not in alias_owner or alias_owner.get(name) == name
+        ]
+
+        timeline = _mock_timeline(text)
+        characters: list[BibleCharacterDraft] = []
+        for name in names:
+            aliases = [*known.get(name, []), *aliases_by_name.get(name, [])]
+            alias_drafts = [
+                {"name": alias, "confidence": 0.45, "basis": "inferred"}
+                for alias in dict.fromkeys(aliases)
+                if alias and alias != name
+            ]
+            stage = _mock_age_stage(text, name)
+            arc_note = None
+            if stage != "unknown":
+                arc_note = f"本章处于{_STAGE_LABELS.get(stage, stage)}阶段（模拟模式启发式）。"
+            characters.append(
+                BibleCharacterDraft(
+                    name=name,
+                    aliases=alias_drafts,
+                    gender="unknown",
+                    age_range=stage,
+                    character_type="unknown",
+                    role_tier="unknown",
+                    identity_description="模拟模式仅用于流程验证，不代表真实分析结果。",
+                    personality=["待确认"],
+                    arc_note=arc_note,
+                    evidence=[text[:80]] if text else [],
+                    confidence=0.35,
+                    is_provisional=True,
+                )
+            )
+        return BibleChapterResult(
+            characters=characters,
+            timeline=timeline,
+            meta={"mock": True, "prompt_version": "mock", "characters": len(characters)},
+        )
+
+    def merge_bible_candidates(
+        self, candidates: list[dict], context: dict | None = None
+    ) -> BibleMergeResult:
+        context = context or {}
+        total_chapters = max(1, int(context.get("total_chapters") or 1))
+        characters: list[BibleMergeCharacterDraft] = []
+        for item in candidates:
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            observations = [
+                chapter
+                for chapter in (item.get("chapters") or [])
+                if isinstance(chapter, dict)
+            ]
+            sequences = sorted(
+                {
+                    int(chapter.get("sequence") or 0)
+                    for chapter in observations
+                    if chapter.get("sequence")
+                }
+            )
+            count = len(sequences)
+            if count >= max(2, math.ceil(total_chapters * 0.6)):
+                tier = "protagonist"
+            elif count >= max(2, math.ceil(total_chapters * 0.3)):
+                tier = "major"
+            elif count >= 2:
+                tier = "minor"
+            else:
+                tier = "extra"
+            stage_buckets: dict[str, list[dict]] = {}
+            for chapter in observations:
+                stage_buckets.setdefault(str(chapter.get("age_stage") or "unknown"), []).append(
+                    chapter
+                )
+            arcs: list[BibleArcDraft] = []
+            for stage, rows in stage_buckets.items():
+                rows.sort(key=lambda row: int(row.get("sequence") or 0))
+                notes = [
+                    str(row.get("arc_note") or "").strip()
+                    for row in rows
+                    if str(row.get("arc_note") or "").strip()
+                ]
+                labels = [
+                    str(row.get("story_time_label") or "").strip()
+                    for row in rows
+                    if str(row.get("story_time_label") or "").strip()
+                ]
+                arcs.append(
+                    BibleArcDraft(
+                        label=_STAGE_LABELS.get(stage, "未分阶段"),
+                        age_stage=stage if stage in _STAGE_LABELS else "unknown",
+                        chapter_start=int(rows[0].get("sequence") or 0) or None,
+                        chapter_end=int(rows[-1].get("sequence") or 0) or None,
+                        story_time_start=labels[0] if labels else None,
+                        story_time_end=labels[-1] if labels else None,
+                        summary=" ".join(dict.fromkeys(notes))[:200] or None,
+                        confidence=0.35,
+                    )
+                )
+            if not arcs:
+                arcs.append(
+                    BibleArcDraft(
+                        label="未分阶段",
+                        age_stage="unknown",
+                        chapter_start=sequences[0] if sequences else None,
+                        chapter_end=sequences[-1] if sequences else None,
+                        summary=None,
+                        confidence=0.2,
+                    )
+                )
+            characters.append(
+                BibleMergeCharacterDraft(
+                    name=name,
+                    merge_names=[],
+                    role_tier=tier,
+                    overview=str(item.get("identity") or "").strip() or None,
+                    arcs=arcs,
+                    confidence=0.4,
+                )
+            )
+        return BibleMergeResult(
+            characters=characters,
+            summary=(
+                f"模拟模式：共 {total_chapters} 章，归并出 {len(characters)} 个候选角色。"
+                "该结果只验证流程，不代表真实全书分析。"
+            ),
+            notes=[],
+            meta={"mock": True, "prompt_version": "mock"},
+        )
+
+    def synthesize_bible_timeline(
+        self, chapters: list[dict], context: dict | None = None
+    ) -> BibleTimelineResult:
+        rows: list[dict] = [item for item in chapters if isinstance(item, dict)]
+        nonlinear = any(
+            str(item.get("time_mode") or "unknown") not in {"present", "unknown"}
+            for item in rows
+        )
+        ordered = sorted(
+            rows,
+            key=lambda item: (
+                0
+                if str(item.get("time_mode") or "unknown") not in {"present", "unknown"}
+                else 1,
+                int(item.get("sequence") or 0),
+            ),
+        )
+        order_by_sequence = {
+            int(item.get("sequence") or 0): index + 1 for index, item in enumerate(ordered)
+        }
+        return BibleTimelineResult(
+            narrative_mode="nonlinear" if nonlinear else "linear",
+            chapters=[
+                BibleTimelineChapterDraft(
+                    sequence=int(item.get("sequence") or 0),
+                    story_time_label=item.get("story_time_label"),
+                    story_order=order_by_sequence.get(int(item.get("sequence") or 0)),
+                    time_mode=str(item.get("time_mode") or "unknown"),
+                )
+                for item in rows
+            ],
+            notes=["模拟模式按“非顺叙章节前置”生成剧情顺序，仅供流程验证。"]
+            if nonlinear
+            else [],
             meta={"mock": True, "prompt_version": "mock"},
         )
 

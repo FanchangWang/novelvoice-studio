@@ -1511,4 +1511,12 @@ def recover_interrupted_analysis(
             chapter.analysis_meta_json = meta
             chapter.analysis_status = "failed"
             chapter.updated_at = now
-        return {"jobs": len(jobs), "chapters": len(chapters)}
+        from novelvoice_studio.services.bible import recover_interrupted_bible
+
+        bible = recover_interrupted_bible(session)
+        return {
+            "jobs": len(jobs),
+            "chapters": len(chapters),
+            "bible_jobs": bible["jobs"],
+            "bibles": bible["bibles"],
+        }

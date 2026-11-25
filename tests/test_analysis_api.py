@@ -273,7 +273,12 @@ def test_analysis_recovery_marks_interrupted(
         session.commit()
 
     recovered = recover_interrupted_analysis(session_factory)
-    assert recovered == {"jobs": 1, "chapters": 1}
+    assert recovered == {
+        "jobs": 1,
+        "chapters": 1,
+        "bible_jobs": 0,
+        "bibles": 0,
+    }
     status = client.get(f"/api/v1/books/{book_id}/analysis/status").json()
     assert status["job"]["status"] == "failed"
     assert status["job"]["error_code"] == "interrupted"

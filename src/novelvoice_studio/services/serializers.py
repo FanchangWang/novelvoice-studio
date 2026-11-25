@@ -16,6 +16,8 @@ def to_book_summary(book: Book, chapter_count: int) -> BookSummary:
         description=book.description,
         language=book.language,
         status=book.status,
+        bible_status=book.bible_status,
+        production_status=book.production_status,
         source_encoding=book.source_encoding,
         source_char_count=book.source_char_count,
         chapter_count=chapter_count,

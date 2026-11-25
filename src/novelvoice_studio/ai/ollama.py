@@ -16,6 +16,9 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from novelvoice_studio.ai.base import (
+    BibleChapterResult,
+    BibleMergeResult,
+    BibleTimelineResult,
     ChapterSummaryResult,
     CharacterAnalysisResult,
     LLMProvider,
@@ -23,10 +26,16 @@ from novelvoice_studio.ai.base import (
     SegmentAnalysisResult,
 )
 from novelvoice_studio.ai.prompts import (
+    BIBLE_CHARACTER_PROMPT_VERSION,
+    BIBLE_MERGE_PROMPT_VERSION,
+    BIBLE_TIMELINE_PROMPT_VERSION,
     CHARACTER_PROMPT_VERSION,
     SEGMENT_PROMPT_VERSION,
     SUMMARY_PROMPT_VERSION,
     SCHEMAS,
+    bible_character_messages,
+    bible_merge_messages,
+    bible_timeline_messages,
     character_messages,
     repair_messages,
     segment_messages,
@@ -290,4 +299,43 @@ class OllamaLLMProvider(LLMProvider):
             ChapterSummaryResult,
             task="summary",
             prompt_version=SUMMARY_PROMPT_VERSION,
+        )
+
+    # ---------------------------------------------------------- v0.5.0 P2
+
+    def extract_bible_characters(
+        self,
+        text: str,
+        known_characters: list[dict[str, Any]],
+        context: dict[str, Any] | None = None,
+    ) -> BibleChapterResult:
+        return self._structured(
+            bible_character_messages(text, known_characters, context),
+            BibleChapterResult,
+            task="bible_characters",
+            prompt_version=BIBLE_CHARACTER_PROMPT_VERSION,
+        )
+
+    def merge_bible_candidates(
+        self,
+        candidates: list[dict[str, Any]],
+        context: dict[str, Any] | None = None,
+    ) -> BibleMergeResult:
+        return self._structured(
+            bible_merge_messages(candidates, context),
+            BibleMergeResult,
+            task="bible_merge",
+            prompt_version=BIBLE_MERGE_PROMPT_VERSION,
+        )
+
+    def synthesize_bible_timeline(
+        self,
+        chapters: list[dict[str, Any]],
+        context: dict[str, Any] | None = None,
+    ) -> BibleTimelineResult:
+        return self._structured(
+            bible_timeline_messages(chapters, context),
+            BibleTimelineResult,
+            task="bible_timeline",
+            prompt_version=BIBLE_TIMELINE_PROMPT_VERSION,
         )
