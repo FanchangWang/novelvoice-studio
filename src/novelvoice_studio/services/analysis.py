@@ -1512,11 +1512,15 @@ def recover_interrupted_analysis(
             chapter.analysis_status = "failed"
             chapter.updated_at = now
         from novelvoice_studio.services.bible import recover_interrupted_bible
+        from novelvoice_studio.services.scenes import recover_interrupted_scenes
 
         bible = recover_interrupted_bible(session)
+        scenes = recover_interrupted_scenes(session)
         return {
             "jobs": len(jobs),
             "chapters": len(chapters),
             "bible_jobs": bible["jobs"],
             "bibles": bible["bibles"],
+            "scene_jobs": scenes["jobs"],
+            "scene_chapters": scenes["chapters"],
         }

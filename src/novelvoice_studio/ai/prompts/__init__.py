@@ -21,6 +21,9 @@ BIBLE_CHARACTER_PROMPT_VERSION = f"{BIBLE_PROMPT_VERSION}.characters"
 BIBLE_MERGE_PROMPT_VERSION = f"{BIBLE_PROMPT_VERSION}.merge"
 BIBLE_TIMELINE_PROMPT_VERSION = f"{BIBLE_PROMPT_VERSION}.timeline"
 
+# v0.5.0 P3 逐章分场与角色状态快照。窗口按片段编号完整覆盖。
+SCENE_PROMPT_VERSION = "v050.p3.scene.v1"
+
 _JSON_RULES = """你必须只输出一个合法 JSON 对象，不要输出 Markdown、代码围栏、解释或前后缀文字。
 不得编造原文没有的事实。无法判断时使用 unknown，不要根据姓名刻板印象猜测性别或年龄。
 所有引文必须来自本次输入文本。"""
@@ -166,6 +169,41 @@ _BIBLE_TIMELINE_SCHEMA = """{
     }
   ],
   "notes": ["时间线疑点"]
+}"""
+
+_SCENE_SCHEMA = """{
+  "scenes": [
+    {
+      "paragraph_start": 0,
+      "paragraph_end": 2,
+      "title": "短场景标题",
+      "summary": "场景客观摘要，不评价文笔",
+      "location": "地点，无法判断为 null",
+      "story_time_label": "场景故事内时间，可为 null",
+      "time_mode": "present|flashback|flashforward|dream|unknown",
+      "pov_name": "视角角色标准姓名，无法判断为 null",
+      "mood": "气氛，最多 12 字",
+      "characters": [
+        {
+          "name": "角色标准姓名，必须来自注册表",
+          "presence": "speaker|present|mentioned",
+          "age_stage": "child|teenager|young_adult|adult|middle_aged|elderly|unknown",
+          "physical_state": "受伤、疲惫、醉酒等；无依据为 null",
+          "emotional_state": "紧张、害怕、压抑等；无依据为 null",
+          "relationship_state": "本场景中对其他角色的态度/关系状态，可为 null",
+          "knowledge_state": "本场景知道/不知道/误以为什么，可为 null",
+          "disguise_state": "易容、假名、卧底等，可为 null",
+          "voice_note": "供 TTS 的声音提示，例如沙哑、虚弱、压低；可为 null",
+          "state_tags": ["简短状态标签"],
+          "confidence": 0.0,
+          "evidence": [{"quote": "原文证据", "reason": "判断理由"}]
+        }
+      ],
+      "confidence": 0.0,
+      "evidence": [{"quote": "原文证据", "reason": "场景划分依据"}]
+    }
+  ],
+  "notes": ["需要人工确认的分场或状态疑点"]
 }"""
 
 
@@ -346,6 +384,51 @@ def bible_timeline_messages(
     return [_system(system), _user(user)]
 
 
+def scene_messages(
+    paragraphs: list[dict[str, Any]],
+    known_characters: list[dict[str, Any]],
+    context: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
+    context = context or {}
+    chapter_time = context.get("chapter_time") or {}
+    system = (
+        "你是中文小说的分场与角色状态编辑。当前只处理一章（或其中一段窗口），"
+        "需要把原文片段切分为场景，并为每个出场角色记录本场景的状态快照。"
+        "\n规则：\n"
+        "1. 每个输入片段必须且只能属于一个场景；scenes 必须按片段顺序排列，"
+        "paragraph_start/paragraph_end 是输入片段的 index（包含首尾），"
+        "不得跳号、重叠或遗漏。\n"
+        "2. 按地点、故事时间、视角、事件或情绪转折切分场景，不要仅按长度平均切分。\n"
+        "3. 角色姓名只能使用注册表中的标准姓名，不得创造新角色；"
+        "只被提及而未出场的角色可用 presence=mentioned；对话发言者用 speaker。\n"
+        "4. 状态必须按场景的剧情时间解释。time_mode 不是 present（倒叙、回忆、梦境、预叙）时，"
+        "要使用角色在那一时点的年龄阶段与身心状态，不得把当前章节状态带进去。\n"
+        "5. age_stage、身体、心理、关系、知情、伪装和声音提示只在原文有依据时填写；"
+        "没有依据用 unknown 或 null。关系状态写本场景中的态度/距离，不重复全书关系设定。\n"
+        "6. 视角角色优先从注册表选择；无法判断时 pov_name=null。\n"
+        "7. 置信度要保守；分场边界或状态不确定时写 notes，供异常收件箱处理。\n"
+        f"\n{_JSON_RULES}\n输出结构：\n{_SCENE_SCHEMA}"
+    )
+    user = (
+        f"书籍：{context.get('book_title', '未知')}\n"
+        f"当前章节：{context.get('chapter_title', '')}"
+        f"（序号 {context.get('chapter_sequence', '?')}）\n"
+        f"本章摘要（仅供指代参考，不可当作原文证据）："
+        f"{context.get('chapter_summary') or '无'}\n"
+        f"上一章摘要：{context.get('previous_summary') or '无'}\n"
+        f"下一章摘要：{context.get('next_summary') or '无'}\n"
+        f"本章剧情时间：故事时间={chapter_time.get('story_time_label') or '未知'}；"
+        f"time_mode={chapter_time.get('time_mode') or 'unknown'}；"
+        f"story_order={chapter_time.get('story_order') or '未知'}\n\n"
+        f"角色注册表（标准姓名、别名、人物弧）：\n"
+        f"{_registry(known_characters)}\n\n"
+        "请分析下面的原文片段。片段编号可能因超长段落被切分而不等于原段落编号，"
+        "但仍必须完整覆盖：\n"
+        f"{json.dumps(paragraphs, ensure_ascii=False, indent=2)}"
+    )
+    return [_system(system), _user(user)]
+
+
 def repair_messages(
     invalid_output: str,
     error: str,
@@ -371,4 +454,5 @@ SCHEMAS = {
     "bible_characters": _BIBLE_CHARACTER_SCHEMA,
     "bible_merge": _BIBLE_MERGE_SCHEMA,
     "bible_timeline": _BIBLE_TIMELINE_SCHEMA,
+    "scenes": _SCENE_SCHEMA,
 }

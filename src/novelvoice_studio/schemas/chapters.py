@@ -24,6 +24,9 @@ class ChapterSummary(BaseModel):
     source_start_offset: int
     source_end_offset: int
     analysis_status: str
+    scene_status: str = "not_started"
+    scene_version: int = 0
+    script_status: str = "not_started"
     summary: str | None = None
     created_at: datetime
     updated_at: datetime

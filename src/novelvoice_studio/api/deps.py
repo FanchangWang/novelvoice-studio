@@ -18,6 +18,7 @@ from novelvoice_studio.services.chapter_ops import ChapterService
 from novelvoice_studio.services.character_ops import CharacterService
 from novelvoice_studio.services.importer import ImportService
 from novelvoice_studio.services.audio import AudioService
+from novelvoice_studio.services.scenes import SceneService
 from novelvoice_studio.services.segment_ops import SegmentService
 from novelvoice_studio.services.voices import VoiceService
 
@@ -111,6 +112,14 @@ def get_audio_service(
     return AudioService(settings, session, registry)
 
 
+def get_scene_service(
+    settings: Settings = Depends(get_app_settings),
+    factory: sessionmaker[Session] = Depends(get_session_factory),
+    registry: ProviderRegistry = Depends(get_registry),
+) -> SceneService:
+    return SceneService(settings, factory, registry)
+
+
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 SessionDep = Annotated[Session, Depends(get_session)]
 EngineDep = Annotated[Engine, Depends(get_engine)]
@@ -124,3 +133,4 @@ AnalysisServiceDep = Annotated[AnalysisService, Depends(get_analysis_service)]
 BibleServiceDep = Annotated[BibleService, Depends(get_bible_service)]
 VoiceServiceDep = Annotated[VoiceService, Depends(get_voice_service)]
 AudioServiceDep = Annotated[AudioService, Depends(get_audio_service)]
+SceneServiceDep = Annotated[SceneService, Depends(get_scene_service)]

@@ -20,11 +20,14 @@ from novelvoice_studio.ai.base import (
     BibleTimelineChapterDraft,
     BibleTimelineDraft,
     BibleTimelineResult,
+    ChapterSceneResult,
     ChapterSummaryResult,
     CharacterAnalysisResult,
     CharacterDraft,
     LLMProvider,
     ProviderHealth,
+    SceneCharacterStateDraft,
+    SceneDraft,
     SegmentAnalysisResult,
     SegmentDraft,
     TTSProvider,
@@ -539,6 +542,99 @@ class MockLLMProvider(LLMProvider):
             ),
             notes=[],
             meta={"mock": True, "prompt_version": "mock"},
+        )
+
+    # ---------------------------------------------------------- v0.5.0 P3
+
+    def analyze_chapter_scenes(
+        self,
+        paragraphs: list[dict],
+        known_characters: list[dict],
+        context: dict | None = None,
+    ) -> ChapterSceneResult:
+        context = context or {}
+        units = [
+            {
+                "index": int(item.get("index", position)),
+                "text": str(item.get("text") or "").strip(),
+            }
+            for position, item in enumerate(paragraphs)
+            if str(item.get("text") or "").strip()
+        ]
+        if not units:
+            return ChapterSceneResult(
+                meta={"mock": True, "prompt_version": "mock", "scenes": 0}
+            )
+
+        known: list[tuple[str, list[str], str | None]] = []
+        for item in known_characters:
+            name = str(item.get("canonical_name") or item.get("name") or "").strip()
+            if not name:
+                continue
+            aliases = [
+                str(alias.get("name") if isinstance(alias, dict) else alias).strip()
+                for alias in (item.get("aliases") or [])
+                if (alias.get("name") if isinstance(alias, dict) else alias)
+            ]
+            known.append((name, [alias for alias in aliases if alias], item.get("voice_description")))
+
+        chapter_time = context.get("chapter_time") or {}
+        chapter_mode = str(chapter_time.get("time_mode") or "unknown")
+        chunk_size = max(1, math.ceil(len(units) / 3))
+        scenes: list[SceneDraft] = []
+        for offset in range(0, len(units), chunk_size):
+            group = units[offset : offset + chunk_size]
+            text = "\n".join(item["text"] for item in group)
+            timeline = _mock_timeline(text)
+            mode = timeline.time_mode
+            label = timeline.story_time_label
+            if mode in {"present", "unknown"} and chapter_mode in {
+                "flashback",
+                "flashforward",
+                "dream",
+            }:
+                mode = chapter_mode
+                label = label or chapter_time.get("story_time_label")
+            states: list[SceneCharacterStateDraft] = []
+            for name, aliases, voice_description in known:
+                if name not in text and not any(alias in text for alias in aliases):
+                    continue
+                speaker = bool(
+                    re.search(
+                        re.escape(name) + r".{0,6}(?:说|道|问|答|喊|叫|开口)",
+                        text,
+                    )
+                )
+                states.append(
+                    SceneCharacterStateDraft(
+                        name=name,
+                        presence="speaker" if speaker else "present",
+                        age_stage=_mock_age_stage(text, name),
+                        voice_note=voice_description
+                        or "模拟模式：仅验证分场与状态流程。",
+                        state_tags=["模拟"],
+                        confidence=0.45,
+                        evidence=[text[:80]],
+                    )
+                )
+            title = " ".join(group[0]["text"].split())[:24] or None
+            scenes.append(
+                SceneDraft(
+                    paragraph_start=group[0]["index"],
+                    paragraph_end=group[-1]["index"],
+                    title=title,
+                    summary=" ".join(text.split())[:160],
+                    story_time_label=label,
+                    time_mode=mode,
+                    characters=states,
+                    confidence=0.45,
+                    evidence=[text[:100]],
+                )
+            )
+        return ChapterSceneResult(
+            scenes=scenes,
+            notes=["模拟模式分场仅用于流程验证，不代表真实分场结果。"],
+            meta={"mock": True, "prompt_version": "mock", "scenes": len(scenes)},
         )
 
     def synthesize_bible_timeline(

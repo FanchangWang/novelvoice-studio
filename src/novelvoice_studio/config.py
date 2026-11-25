@@ -133,6 +133,8 @@ class AnalysisConfig(BaseModel):
     speaker_confidence_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
     emotion_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     alias_confidence_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    # 分场/角色状态低于该置信度进入异常收件箱，不阻塞其他场景。
+    scene_confidence_threshold: float = Field(default=0.4, ge=0.0, le=1.0)
 
 
 class JobsConfig(BaseModel):

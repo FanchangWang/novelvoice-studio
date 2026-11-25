@@ -33,7 +33,9 @@ def _wait_bible(client: TestClient, book_id: str, timeout: float = 30.0) -> dict
         assert response.status_code == 200
         last = response.json()
         job = last.get("job")
-        if job is None or job["status"] in {"completed", "failed", "cancelled"}:
+        if (
+            job is None or job["status"] in {"completed", "failed", "cancelled"}
+        ) and last.get("bible_status") != "running":
             return last
         time.sleep(0.05)
     raise AssertionError(f"角色圣经任务未在 {timeout}s 内结束: {last}")

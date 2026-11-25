@@ -53,11 +53,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     check_database(engine)
     session_factory = create_session_factory(engine)
     recovered = recover_interrupted_analysis(session_factory)
-    if recovered["jobs"] or recovered["chapters"]:
+    if (
+        recovered["jobs"]
+        or recovered["chapters"]
+        or recovered["bible_jobs"]
+        or recovered["scene_jobs"]
+    ):
         logger.warning(
-            "已恢复中断的分析任务：jobs=%s chapters=%s",
+            "已恢复中断的分析任务：jobs=%s chapters=%s bible_jobs=%s scene_jobs=%s",
             recovered["jobs"],
             recovered["chapters"],
+            recovered["bible_jobs"],
+            recovered["scene_jobs"],
         )
 
     @asynccontextmanager

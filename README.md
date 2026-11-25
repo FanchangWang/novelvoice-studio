@@ -8,6 +8,8 @@
 - 书库：书籍列表、详情、软删除/恢复、搜索。
 - 章节工作区：正文渲染、重命名、拆分、合并、段落级操作入口。
 - AI 分析（阶段 2）：本机 Ollama 结构化输出，提取角色、别名、关系、章节摘要与逐段说话人/情绪/演绎建议。
+- 全书角色圣经（v0.5.0 P2）：章节摘要汇总、标准角色/别名、关系、人物弧、非线性剧情时间线与异常收件箱；支持选定章节重跑。
+- 逐章分场与角色状态（v0.5.0 P3）：按角色圣经和剧情时间切分场景，记录地点、时间、视角、气氛、原文范围与出场角色状态；窗口覆盖校验、确定性回退、版本与取消恢复。
 - 审核工作区：片段筛选与批量修改、角色资料编辑/锁定/合并/拆分、别名候选确认、低置信度与回退片段强制复核。
 - 全书分析任务：进度、取消、失败重试、启动时中断恢复；用户编辑字段在重跑时保留。
 - 声音库（阶段 3）：按书为旁白/角色生成多个音色候选，试听、绑定、切换、删除未使用候选；参考音在绑定时自动去齿。
@@ -195,7 +197,7 @@ npm run build
 pwsh.exe -File ../scripts/check_environment.ps1
 ```
 
-当前基线（2026-11-26）：后端 **126 passed**，前端 **33 passed / 7 files**，`vue-tsc + vite build` 通过。真实 Ollama 验收详情见 [docs/reports/STAGE2_REPORT.md](docs/reports/STAGE2_REPORT.md)，阶段 3 应用验收见 [docs/reports/STAGE3_REPORT.md](docs/reports/STAGE3_REPORT.md)，v0.5.0 P2 全书角色圣经见 [P2 实施报告](docs/reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md)，阶段 0–3 轻度验收方式见 [验收单](docs/acceptance/STAGE0_3_LIGHT_ACCEPTANCE_2026-11-26.md)。
+当前基线（2026-11-26）：后端 **134 passed**，前端 **33 passed / 7 files**，`vue-tsc + vite build` 通过。真实 Ollama 验收详情见 [docs/reports/STAGE2_REPORT.md](docs/reports/STAGE2_REPORT.md)，阶段 3 应用验收见 [docs/reports/STAGE3_REPORT.md](docs/reports/STAGE3_REPORT.md)，v0.5.0 P2 全书角色圣经见 [P2 实施报告](docs/reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md)，P3 分场与角色状态见 [P3 实施报告](docs/reports/P3_SCENES_REPORT_2026-11-26.md)，阶段 0–3 轻度验收方式见 [验收单](docs/acceptance/STAGE0_3_LIGHT_ACCEPTANCE_2026-11-26.md)。
 
 ## 本机安全边界
 
@@ -252,7 +254,7 @@ docs/
 - 阶段 2：本机 Ollama 分析 → 角色/片段审核闭环；低置信度与回退片段必须人工确认。
 - 阶段 3：音色设计/绑定、逐段 WAV 生成、版本回退、引擎服务启停与真实/模拟切换已实现。音质实验与复听记录见 [阶段 3 音质报告](docs/reports/STAGE3_AUDIO_QUALITY_REPORT.md)、[阶段 3B](docs/reports/STAGE3B_AUDIO_REPAIR_REPORT.md)、[阶段 3C](docs/reports/STAGE3C_SIBILANCE_REPORT.md)；应用验收见 [docs/reports/STAGE3_REPORT.md](docs/reports/STAGE3_REPORT.md)。
 - 阶段 4 尚未实现：批量生成与任务队列、连续播放器、按章节/全书导出 M4B、工程混音与多版本管理。
-- v0.5.0 重构正在后端推进：P1 数据层与 P2 全书角色圣经已完成，制作台 UI、分场、剧本与配音员库按设计顺延；详情见 [v0.5.0 AI 生产链重构](docs/design/V0_5_0_AI_PRODUCTION_CHAIN_2026-11-26.md)。
+- v0.5.0 重构正在后端推进：P1 数据层、P2 全书角色圣经与 P3 逐章分场/角色状态已完成，制作台 UI、有声剧本与配音员库按设计顺延；详情见 [v0.5.0 AI 生产链重构](docs/design/V0_5_0_AI_PRODUCTION_CHAIN_2026-11-26.md)、[P2 实施报告](docs/reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md) 与 [P3 实施报告](docs/reports/P3_SCENES_REPORT_2026-11-26.md)。
 - 阶段 0 的听感 gate 已由用户本人于 2026-11-25 有条件通过；sad 表现力、句尾气声与参考文本条件仍是质量待办。**许可证核对（含 `ttsfrd` / `wetext`）尚未完成**，不能视为已签收。
 
 详细架构口径见 [docs/ARCHITECTURE_NOTES.md](docs/ARCHITECTURE_NOTES.md)，阶段 2 验收记录见 [docs/reports/STAGE2_REPORT.md](docs/reports/STAGE2_REPORT.md)，POC 实测见 [docs/reports/POC_REPORT.md](docs/reports/POC_REPORT.md)，完整需求见 [需求规格说明书 v1.0](docs/requirements/NovelVoice_Studio_需求规格说明书_v1.0.md)，全部文档见 [docs/README.md](docs/README.md)。

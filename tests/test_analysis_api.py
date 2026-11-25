@@ -278,6 +278,8 @@ def test_analysis_recovery_marks_interrupted(
         "chapters": 1,
         "bible_jobs": 0,
         "bibles": 0,
+        "scene_jobs": 0,
+        "scene_chapters": 0,
     }
     status = client.get(f"/api/v1/books/{book_id}/analysis/status").json()
     assert status["job"]["status"] == "failed"

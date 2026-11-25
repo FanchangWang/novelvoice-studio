@@ -12,6 +12,7 @@ from pydantic import (
     ConfigDict,
     Field,
     field_validator,
+    model_validator,
 )
 
 Basis = Literal["explicit", "inferred", "unknown"]
@@ -23,6 +24,7 @@ CharacterType = Literal["human", "animal", "non_human", "unknown"]
 RoleTier = Literal["protagonist", "major", "minor", "extra", "unknown"]
 TimeMode = Literal["present", "flashback", "flashforward", "dream", "unknown"]
 NarrativeMode = Literal["linear", "nonlinear", "unknown"]
+Presence = Literal["speaker", "present", "mentioned"]
 SegmentType = Literal["narration", "dialogue", "inner_monologue", "unknown"]
 SpeakerType = Literal["character", "narrator", "unknown"]
 Emotion = Literal[
@@ -57,6 +59,47 @@ AGE_GROUP_ALIASES = {
     "middle": "middle_aged",
     "senior": "elderly",
     "elder": "elderly",
+    "幼年": "child",
+    "童年": "child",
+    "小时候": "child",
+    "少年": "teenager",
+    "青年": "young_adult",
+    "成年": "adult",
+    "中年": "middle_aged",
+    "老年": "elderly",
+    "老人": "elderly",
+    "未分阶段": "unknown",
+}
+
+_TIME_MODE_ALIASES = {
+    "current": "present",
+    "now": "present",
+    "现在": "present",
+    "顺叙": "present",
+    "回忆": "flashback",
+    "倒叙": "flashback",
+    "过去": "flashback",
+    "预叙": "flashforward",
+    "未来": "flashforward",
+    "梦境": "dream",
+    "梦里": "dream",
+    "梦中": "dream",
+    "未知": "unknown",
+}
+
+_PRESENCE_ALIASES = {
+    "appears": "present",
+    "onstage": "present",
+    "出场": "present",
+    "在场": "present",
+    "speaks": "speaker",
+    "dialogue": "speaker",
+    "说话": "speaker",
+    "对白": "speaker",
+    "absent": "mentioned",
+    "offstage": "mentioned",
+    "提及": "mentioned",
+    "被提及": "mentioned",
 }
 
 
@@ -140,6 +183,52 @@ def _coerce_aliases(value: object) -> object:
         else:
             result.append(item)
     return result
+
+
+def _coerce_str_list(value: object) -> object:
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        parts = value.replace("；", ",").replace(";", ",").replace("、", ",").split(",")
+        return [part.strip() for part in parts if part.strip()]
+    return value
+
+
+def _normalize_time_mode(value: object) -> object:
+    if isinstance(value, str):
+        cleaned = value.strip().lower()
+        return _TIME_MODE_ALIASES.get(cleaned, cleaned)
+    return value
+
+
+def _normalize_presence(value: object) -> object:
+    if isinstance(value, str):
+        cleaned = value.strip().lower()
+        return _PRESENCE_ALIASES.get(cleaned, cleaned)
+    return value
+
+
+def _coerce_scene_states(value: object) -> object:
+    """分场模型偶尔把出场角色写成字符串或姓名映射，宽松转成状态列表。"""
+    if isinstance(value, str):
+        return [{"name": value}]
+    if isinstance(value, dict):
+        rows: list[dict[str, Any]] = []
+        for name, state in value.items():
+            if isinstance(state, dict):
+                rows.append({**state, "name": name})
+            else:
+                rows.append({"name": name})
+        return rows
+    if not isinstance(value, list):
+        return value
+    rows = []
+    for item in value:
+        if isinstance(item, str):
+            rows.append({"name": item})
+        else:
+            rows.append(item)
+    return rows
 
 
 class CharacterDraft(BaseModel):
@@ -398,6 +487,149 @@ class BibleTimelineResult(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
+class SceneCharacterStateDraft(BaseModel):
+    """P3 场景内角色状态快照，按剧情时间而非章节顺序解释。"""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    name: str = Field(
+        validation_alias=AliasChoices("name", "canonical_name", "character_name")
+    )
+    presence: Presence = "present"
+    age_stage: AgeRange = Field(
+        default="unknown", validation_alias=AliasChoices("age_stage", "age_range")
+    )
+    physical_state: str | None = None
+    emotional_state: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "emotional_state", "psychological_state", "mental_state"
+        ),
+    )
+    relationship_state: str | None = None
+    knowledge_state: str | None = None
+    disguise_state: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("disguise_state", "identity_state"),
+    )
+    voice_note: str | None = Field(
+        default=None, validation_alias=AliasChoices("voice_note", "voice_hint")
+    )
+    state_tags: list[str] = Field(default_factory=list)
+    confidence: float = 0.0
+    evidence: list[EvidenceDraft] = Field(default_factory=list)
+
+    @field_validator("presence", mode="before")
+    @classmethod
+    def _presence_alias(cls, value: object) -> object:
+        return _normalize_presence(value)
+
+    @field_validator("age_stage", mode="before")
+    @classmethod
+    def _age_alias(cls, value: object) -> object:
+        if isinstance(value, str):
+            cleaned = value.strip().lower()
+            return AGE_GROUP_ALIASES.get(cleaned, cleaned)
+        return value
+
+    @field_validator("state_tags", mode="before")
+    @classmethod
+    def _tags_before(cls, value: object) -> object:
+        return _coerce_str_list(value)
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def _evidence_before(cls, value: object) -> object:
+        return _coerce_evidence(value)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _clamp_confidence(cls, value: object) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, number))
+
+
+class SceneDraft(BaseModel):
+    """P3 单个场景；段落编号使用输入片段 index，含首尾端点。"""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    paragraph_start: int = Field(
+        ge=0,
+        validation_alias=AliasChoices(
+            "paragraph_start", "start_index", "start_paragraph", "start"
+        ),
+    )
+    paragraph_end: int = Field(
+        ge=0,
+        validation_alias=AliasChoices(
+            "paragraph_end", "end_index", "end_paragraph", "end"
+        ),
+    )
+    title: str | None = None
+    summary: str | None = None
+    location: str | None = None
+    story_time_label: str | None = None
+    time_mode: TimeMode = "unknown"
+    pov_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "pov_name", "pov_character", "pov_character_name", "pov"
+        ),
+    )
+    mood: str | None = None
+    characters: list[SceneCharacterStateDraft] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("characters", "character_states", "states"),
+    )
+    confidence: float = 0.0
+    evidence: list[EvidenceDraft] = Field(default_factory=list)
+
+    @field_validator("characters", mode="before")
+    @classmethod
+    def _characters_before(cls, value: object) -> object:
+        return _coerce_scene_states(value)
+
+    @field_validator("time_mode", mode="before")
+    @classmethod
+    def _time_mode_alias(cls, value: object) -> object:
+        return _normalize_time_mode(value)
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def _evidence_before(cls, value: object) -> object:
+        return _coerce_evidence(value)
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _clamp_confidence(cls, value: object) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, number))
+
+    @model_validator(mode="after")
+    def _range_order(self) -> "SceneDraft":
+        if self.paragraph_end < self.paragraph_start:
+            raise ValueError("paragraph_end 必须大于或等于 paragraph_start")
+        return self
+
+
+class ChapterSceneResult(BaseModel):
+    scenes: list[SceneDraft] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def _notes_before(cls, value: object) -> object:
+        return _coerce_str_list(value)
+
+
 class LLMProvider(ABC):
     name = "llm"
     model = ""
@@ -454,6 +686,15 @@ class LLMProvider(ABC):
     ) -> BibleTimelineResult:
         """P2 剧情时间线综合；输入是章节摘要，不是整本书原文。"""
         raise NotImplementedError("当前 LLM Provider 不支持剧情时间线综合")
+
+    def analyze_chapter_scenes(
+        self,
+        paragraphs: list[dict[str, Any]],
+        known_characters: list[dict[str, Any]],
+        context: dict[str, Any] | None = None,
+    ) -> ChapterSceneResult:
+        """P3 单章/单窗口分场与角色状态；输入片段编号必须完整覆盖。"""
+        raise NotImplementedError("当前 LLM Provider 不支持分场分析")
 
     def unload_model(self) -> None:
         return None
