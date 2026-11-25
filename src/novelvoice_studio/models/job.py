@@ -26,6 +26,9 @@ class GenerationJob(Base):
         String(32), ForeignKey("books.id", ondelete="CASCADE"), nullable=False, index=True
     )
     target_id: Mapped[str | None] = mapped_column(String(32))
+    target_type: Mapped[str | None] = mapped_column(String(24))
+    stage: Mapped[str | None] = mapped_column(String(24))
+    parent_job_id: Mapped[str | None] = mapped_column(String(32), index=True)
     job_type: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
     total_items: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

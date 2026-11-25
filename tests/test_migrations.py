@@ -9,7 +9,7 @@ from novelvoice_studio.models import Book
 from novelvoice_studio.services.text_io import sha256_bytes
 
 
-def test_initial_migration_creates_all_tables(settings: Settings) -> None:
+def test_migrations_create_all_tables(settings: Settings) -> None:
     with sqlite3.connect(settings.db_path) as connection:
         tables = {
             row[0]
@@ -28,6 +28,15 @@ def test_initial_migration_creates_all_tables(settings: Settings) -> None:
         "audio_assets",
         "generation_jobs",
         "playback_states",
+        "book_bibles",
+        "character_arcs",
+        "scenes",
+        "scene_characters",
+        "script_versions",
+        "script_units",
+        "voice_actors",
+        "voice_casts",
+        "review_items",
     }
     assert expected.issubset(tables)
     assert revision is not None

@@ -195,7 +195,7 @@ npm run build
 pwsh.exe -File ../scripts/check_environment.ps1
 ```
 
-当前基线（2026-11-26）：后端 **102 passed**，前端 **33 passed / 7 files**，`vue-tsc + vite build` 通过。真实 Ollama 验收详情见 [docs/reports/STAGE2_REPORT.md](docs/reports/STAGE2_REPORT.md)，阶段 3 应用验收见 [docs/reports/STAGE3_REPORT.md](docs/reports/STAGE3_REPORT.md)。
+当前基线（2026-11-26）：后端 **106 passed**，前端 **33 passed / 7 files**，`vue-tsc + vite build` 通过。真实 Ollama 验收详情见 [docs/reports/STAGE2_REPORT.md](docs/reports/STAGE2_REPORT.md)，阶段 3 应用验收见 [docs/reports/STAGE3_REPORT.md](docs/reports/STAGE3_REPORT.md)，阶段 0–3 轻度验收方式见 [验收单](docs/acceptance/STAGE0_3_LIGHT_ACCEPTANCE_2026-11-26.md)。
 
 ## 本机安全边界
 
@@ -226,6 +226,8 @@ docs/
   README.md       # 文档索引
   ARCHITECTURE_NOTES.md
   MODELS.md
+  acceptance/     # 阶段验收方式与验收单
+  design/         # v0.5.0 生产链与数据模型设计
   requirements/   # 需求规格说明书
   reports/        # 阶段 0 POC 与阶段 2/3 报告
 ```

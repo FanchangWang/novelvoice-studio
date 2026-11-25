@@ -11,6 +11,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -60,6 +61,13 @@ class Character(Base):
         CheckConstraint(
             "confidence >= 0 AND confidence <= 1", name="ck_characters_confidence"
         ),
+        CheckConstraint(
+            "role_tier IN ('protagonist','major','minor','extra','unknown')",
+            name="ck_characters_role_tier",
+        ),
+        CheckConstraint(
+            "source IN ('ai','legacy','user')", name="ck_characters_source"
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -84,6 +92,13 @@ class Character(Base):
     first_chapter_id: Mapped[str | None] = mapped_column(String(32))
     evidence_json: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    role_tier: Mapped[str] = mapped_column(String(16), default="unknown", nullable=False)
+    arc_summary: Mapped[str | None] = mapped_column(Text)
+    story_time_start: Mapped[str | None] = mapped_column(String(120))
+    story_time_end: Mapped[str | None] = mapped_column(String(120))
+    story_order_start: Mapped[int | None] = mapped_column(Integer)
+    story_order_end: Mapped[int | None] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(16), default="ai", nullable=False)
     is_provisional: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     user_locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     merged_into_id: Mapped[str | None] = mapped_column(String(32), index=True)

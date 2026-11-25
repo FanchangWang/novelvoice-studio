@@ -15,6 +15,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -112,6 +113,7 @@ class Segment(Base):
     source_start_offset: Mapped[int | None] = mapped_column(Integer)
     source_end_offset: Mapped[int | None] = mapped_column(Integer)
     evidence_json: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    migrated_script_unit_id: Mapped[str | None] = mapped_column(String(32), index=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
@@ -127,12 +129,39 @@ class Segment(Base):
 class AudioAsset(Base):
     __tablename__ = "audio_assets"
     __table_args__ = (
-        UniqueConstraint("segment_id", "version", name="uq_audio_assets_segment_version"),
+        Index(
+            "uq_audio_assets_segment_version",
+            "segment_id",
+            "version",
+            unique=True,
+            sqlite_where=text("segment_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_audio_assets_script_unit_version",
+            "script_unit_id",
+            "version",
+            unique=True,
+            sqlite_where=text("script_unit_id IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "segment_id IS NOT NULL OR script_unit_id IS NOT NULL",
+            name="ck_audio_assets_owner",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    segment_id: Mapped[str] = mapped_column(
-        String(32), ForeignKey("segments.id", ondelete="CASCADE"), nullable=False, index=True
+    segment_id: Mapped[str | None] = mapped_column(
+        String(32), ForeignKey("segments.id", ondelete="CASCADE"), index=True
+    )
+    script_unit_id: Mapped[str | None] = mapped_column(
+        String(32),
+        ForeignKey("script_units.id", ondelete="SET NULL"),
+        index=True,
+    )
+    voice_actor_id: Mapped[str | None] = mapped_column(
+        String(32),
+        ForeignKey("voice_actors.id", ondelete="SET NULL"),
+        index=True,
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     file_path: Mapped[str] = mapped_column(Text, nullable=False)

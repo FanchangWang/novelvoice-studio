@@ -9,9 +9,11 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Float,
+    Index,
     Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -27,6 +29,12 @@ class VoiceProfile(Base):
         ),
         CheckConstraint(
             "status IN ('draft','ready','failed')", name="ck_voice_profiles_status"
+        ),
+        Index(
+            "uq_voice_profiles_migrated_actor",
+            "migrated_voice_actor_id",
+            unique=True,
+            sqlite_where=text("migrated_voice_actor_id IS NOT NULL"),
         ),
     )
 
@@ -47,6 +55,7 @@ class VoiceProfile(Base):
     status: Mapped[str] = mapped_column(String(16), default="draft", nullable=False)
     quality_score: Mapped[float | None] = mapped_column(Float)
     user_locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    migrated_voice_actor_id: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=utc_now, onupdate=utc_now, nullable=False
