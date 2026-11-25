@@ -1,0 +1,30 @@
+# 文档索引
+
+本项目文档按“稳定说明 / 需求 / 历史报告”分层。历史报告保留原文件名与原始结论，不因目录整理改写验收状态。
+
+## 稳定说明
+
+- [项目 README](../README.md)：安装、启动、配置、测试与数据目录。
+- [架构说明](ARCHITECTURE_NOTES.md)：模块边界、数据流、安全边界与阶段口径。
+- [模型清单与使用](MODELS.md)：LLM、语音模型的来源、下载链接、缓存位置与启动方式。
+
+## 需求
+
+- [需求规格说明书 v1.0](requirements/NovelVoice_Studio_需求规格说明书_v1.0.md)：产品目标、功能范围、接口与验收标准。
+
+## 阶段报告
+
+- [阶段 0 POC 报告](reports/POC_REPORT.md)：硬件环境、模型来源、结构化输出与三音色试听。
+- [阶段 2 验收报告](reports/STAGE2_REPORT.md)：本机 Ollama 分析、角色/片段审核闭环。
+- [阶段 3 验收报告](reports/STAGE3_REPORT.md)：音色设计、逐段生成、版本回退与 Worker 协议。
+- [阶段 3 音质计划](reports/STAGE3_AUDIO_QUALITY_PLAN.md)：实验矩阵与退出标准。
+- [阶段 3 音质报告](reports/STAGE3_AUDIO_QUALITY_REPORT.md)：音质实验、评分与选型结论。
+- [阶段 3 复听结果](reports/STAGE3_LISTENING_RESULT.md)：首轮复听 gate 不通过。
+- [阶段 3B 修复报告](reports/STAGE3B_AUDIO_REPAIR_REPORT.md)：参考音去齿、VC 链路与聚焦修复。
+- [阶段 3B 复听结果](reports/STAGE3B_LISTENING_RESULT.md)：复听 gate 通过。
+- [阶段 3C 去齿报告](reports/STAGE3C_SIBILANCE_REPORT.md)：句中毛刺与齿音处理定稿。
+- [阶段 3C 复听结果](reports/STAGE3C_LISTENING_RESULT.md)：最终偏好与遗留问题。
+
+## 阅读边界
+
+阶段 0 的听感 gate 是有条件通过；阶段 3 首轮 gate 不通过，3B 复听通过，3C 接受“参考音先去齿、输出不处理”的链路。功能可用不代表音质已验收，模型许可证核对也仍未完成。详见各报告与 [项目 README](../README.md)。

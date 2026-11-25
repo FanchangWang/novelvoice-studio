@@ -1,0 +1,18 @@
+[project]
+name = "novelvoice-qwen-tts-worker"
+version = "0.1.0"
+description = "NovelVoice Studio POC worker: Qwen3-TTS VoiceDesign"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "qwen-tts==0.1.1",
+    "torch==2.11.0+cu128",
+    "torchaudio==2.11.0+cu128",
+    "soundfile>=0.14",
+]
+
+[tool.uv]
+package = false
+# 仅针对本机 Windows x64 解析，避免无关平台的依赖分支。
+environments = ["sys_platform == 'win32' and platform_machine == 'AMD64'"]
+# 阿里云 PyTorch 镜像是扁平 wheel 目录（非 PEP 503），用 find-links 提供候选。
+find-links = ["https://mirrors.aliyun.com/pytorch-wheels/cu128/"]

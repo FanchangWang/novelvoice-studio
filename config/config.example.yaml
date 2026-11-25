@@ -1,0 +1,76 @@
+# 本地优先配置模板：复制为 config/config.yaml 后按需修改。
+# 环境变量 NOVELVOICE_<段>__<字段> 可覆盖任意值，例如 NOVELVOICE_APP__PORT=9000。
+# 业务代码不得硬编码这里的任何值。
+
+app:
+  host: "127.0.0.1"          # 只允许本机访问
+  port: 8765
+  language: "zh-CN"
+  data_dir: ""               # 留空 = %USERPROFILE%\Documents\NovelVoiceStudio
+  log_level: "INFO"
+  auto_migrate: true         # 启动时自动备份并升级数据库
+  max_upload_mb: 64
+
+llm:
+  provider: "ollama"
+  base_url: "http://127.0.0.1:11434"
+  # POC 实测：官方 qwen3.5:4b 可用，但代理下载慢；改用 ModelScope 文本版 GGUF（国内直连）。
+  # 模型清单、链接与获取命令见 docs/MODELS.md；Ollama 模型放在其默认目录，不在本项目数据目录。
+  # 该模型默认开启 thinking 会导致 content 为空，调用时必须传 think=false。
+  model: "modelscope.cn/unsloth/Qwen3.5-4B-GGUF:latest"
+  enable_thinking: false
+  context_length: 8192
+  keep_alive: "5m"
+  timeout_seconds: 120
+
+voice_design:
+  provider: "qwen3_tts"
+  model_id: "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+  # Worker 由 scripts/start_workers.ps1 单独启动；只接受回环地址。
+  worker_url: "http://127.0.0.1:8766"
+  timeout_seconds: 180
+  candidates: 3                 # 每次设计生成 1–5 个候选
+  seeds: [42, 123, 2026]        # 至少一个；不足时循环使用
+  # reference_text / narrator_description 留空时使用内置参考文本与旁白描述。
+
+tts:
+  provider: "cosyvoice3"
+  model_id: "FunAudioLLM/Fun-CosyVoice3-0.5B-2512"
+  worker_url: "http://127.0.0.1:8767"
+  default_speed: 1.0
+  timeout_seconds: 240
+  default_seed: 42
+  max_text_chars: 1200          # 超长片段须先拆分，不静默截断
+  # 参考音在“绑定音色”时先去齿；生成阶段不再重复处理。
+  # 阶段 3C 定稿参数：4–10kHz 动态衰减，最多 -5dB。
+  reference_deess:
+    enabled: true
+    band_low: 4000
+    band_high: 10000
+    threshold_ratio: 0.24
+    full_ratio: 0.62
+    max_reduction_db: 5.0
+
+analysis:
+  # 单章超过此长度会拒绝分析并提示拆分，绝不静默截断原文。
+  max_chapter_chars: 6000
+  # 说话人 / 情绪 / 别名置信度低于阈值时进入人工审核。
+  speaker_confidence_threshold: 0.6
+  emotion_confidence_threshold: 0.5
+  alias_confidence_threshold: 0.7
+
+jobs:
+  max_gpu_concurrency: 1
+  max_retries: 2
+  auto_resume: true
+
+export:
+  audio_codec: "aac"
+  audio_bitrate: "96k"
+  chapter_gap_ms: 800
+
+providers:
+  # mock: 不加载模型，返回确定性模拟结果（界面显示“模拟模式”）
+  # real: LLM 使用本机 Ollama；声音设计/合成使用本机 8766/8767 Worker。
+  # 应用不会自动拉起 Worker，请先运行 scripts/start_workers.ps1。
+  mode: "mock"

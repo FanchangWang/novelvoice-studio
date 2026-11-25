@@ -1,0 +1,306 @@
+{
+  "reference_text": "雨停以后，街上的灯一盏一盏亮起来。风从巷口吹过，带着潮湿的凉意。远处有人慢慢走过，脚步声很轻。",
+  "characters": {
+    "narrator": {
+      "label": "旁白-中年男性（用户选 narrator_03）",
+      "ref_file": "refs_clean/narrator_03.wav",
+      "reference_text": "雨停以后，街上的灯一盏一盏亮起来。风从巷口吹过，带着潮湿的凉意。远处有人慢慢走过，脚步声很轻。"
+    },
+    "young_female": {
+      "label": "年轻女性（用户选 young_female_01）",
+      "ref_file": "refs_clean/young_female_01.wav",
+      "reference_text": "雨停以后，街上的灯一盏一盏亮起来。风从巷口吹过，带着潮湿的凉意。远处有人慢慢走过，脚步声很轻。"
+    },
+    "old_male": {
+      "label": "老年男性（用户选 old_male_03，阶段 3 基线）",
+      "ref_file": "refs_clean/old_male_03.wav",
+      "reference_text": "雨停以后，街上的灯一盏一盏亮起来。风从巷口吹过，带着潮湿的凉意。远处有人慢慢走过，脚步声很轻。"
+    },
+    "old_male_b07": {
+      "label": "老年男性-新 b07 自然语速",
+      "ref_file": "refs_clean/new_old_male_b07.wav",
+      "reference_text": "雨停以后，街上的灯一盏一盏亮起来。风从巷口吹过，带着潮湿的凉意。"
+    },
+    "old_male_b08": {
+      "label": "老年男性-新 b08 清瘦略快",
+      "ref_file": "refs_clean/new_old_male_b08.wav",
+      "reference_text": "雨停以后，街上的灯一盏一盏亮起来。风从巷口吹过，带着潮湿的凉意。"
+    },
+    "narrator_short": {
+      "label": "旁白-短参考（narrator_03 第一句）",
+      "ref_file": "refs_short/narrator_03_s1.wav",
+      "reference_text": "雨停以后，街上的灯一盏一盏亮起来。"
+    },
+    "young_female_short": {
+      "label": "年轻女性-短参考（young_female_01 第一句）",
+      "ref_file": "refs_short/young_female_01_s1.wav",
+      "reference_text": "雨停以后，街上的灯一盏一盏亮起来。"
+    },
+    "old_male_b08_short": {
+      "label": "老年男性-新 b08 短参考（第一句）",
+      "ref_file": "refs_short/new_old_male_b08_s1.wav",
+      "reference_text": "雨停以后，街上的灯一盏一盏亮起来。"
+    }
+  },
+  "cases": [
+    {
+      "id": "sel_narrator_neutral",
+      "group": "selected_core",
+      "character": "narrator",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。"
+    },
+    {
+      "id": "sel_narrator_angry",
+      "group": "selected_core",
+      "character": "narrator",
+      "emotion": "angry",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "愤怒而压抑地质问，语速略快，情绪有力度，保持角色音色不变。"
+    },
+    {
+      "id": "sel_narrator_sad",
+      "group": "selected_core",
+      "character": "narrator",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "悲伤、压抑地低声说，语速较慢，声音发紧，尾音自然收住，不要拖出气声。"
+    },
+    {
+      "id": "sel_young_female_neutral",
+      "group": "selected_core",
+      "character": "young_female",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。"
+    },
+    {
+      "id": "sel_young_female_angry",
+      "group": "selected_core",
+      "character": "young_female",
+      "emotion": "angry",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "愤怒而压抑地质问，语速略快，情绪有力度，保持角色音色不变。"
+    },
+    {
+      "id": "sel_young_female_sad",
+      "group": "selected_core",
+      "character": "young_female",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "悲伤、压抑地低声说，语速较慢，声音发紧，尾音自然收住，不要拖出气声。"
+    },
+    {
+      "id": "sel_old_male_neutral",
+      "group": "selected_core",
+      "character": "old_male",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。"
+    },
+    {
+      "id": "sel_old_male_angry",
+      "group": "selected_core",
+      "character": "old_male",
+      "emotion": "angry",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "愤怒而压抑地质问，语速略快，情绪有力度，保持角色音色不变。"
+    },
+    {
+      "id": "sel_old_male_sad",
+      "group": "selected_core",
+      "character": "old_male",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "悲伤、压抑地低声说，语速较慢，声音发紧，尾音自然收住，不要拖出气声。"
+    },
+    {
+      "id": "old_b07_neutral",
+      "group": "old_new",
+      "character": "old_male_b07",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。"
+    },
+    {
+      "id": "old_b07_sad",
+      "group": "old_new",
+      "character": "old_male_b07",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "声音放低，语速只比平时稍慢，像强忍着难过把话说完；不要哭腔，不要拖长尾音。"
+    },
+    {
+      "id": "old_b08_neutral",
+      "group": "old_new",
+      "character": "old_male_b08",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。"
+    },
+    {
+      "id": "old_b08_sad",
+      "group": "old_new",
+      "character": "old_male_b08",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "声音放低，语速只比平时稍慢，像强忍着难过把话说完；不要哭腔，不要拖长尾音。"
+    },
+    {
+      "id": "sel_old_male_neutral_speed110",
+      "group": "old_new",
+      "character": "old_male",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。",
+      "speed": 1.1,
+      "notes": "测试对 old_male_03 直接加速 1.1，看是否能缓解拖慢。"
+    },
+    {
+      "id": "rtf_narrator_neutral_2",
+      "group": "rtf",
+      "character": "narrator",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。",
+      "notes": "与 sel_narrator_neutral 同缓存键，用于测量缓存命中后的 RTF。"
+    },
+    {
+      "id": "rtf_narrator_neutral_3",
+      "group": "rtf",
+      "character": "narrator",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。",
+      "notes": "与 sel_narrator_neutral 同缓存键，用于测量缓存命中后的 RTF。"
+    },
+    {
+      "id": "rtf_young_female_neutral_2",
+      "group": "rtf",
+      "character": "young_female",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。",
+      "notes": "与 sel_young_female_neutral 同缓存键，用于测量缓存命中后的 RTF。"
+    },
+    {
+      "id": "emo_narrator_sad_b",
+      "group": "emotion_v2",
+      "character": "narrator",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "声音放低，语速只比平时稍慢，像强忍着难过把话说完；不要哭腔，不要拖长尾音。"
+    },
+    {
+      "id": "emo_narrator_sad_c",
+      "group": "emotion_v2",
+      "character": "narrator",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "平静地陈述一件让人难过的事，句子之间短暂停顿；声音略低，但语速正常，不要每个字都拖慢。"
+    },
+    {
+      "id": "emo_narrator_sad_d",
+      "group": "emotion_v2",
+      "character": "narrator",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "带一点疲惫和失落，语气克制，句尾收住；不要叹气，不要气声。"
+    },
+    {
+      "id": "emo_young_female_sad_b",
+      "group": "emotion_v2",
+      "character": "young_female",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "声音放低，语速只比平时稍慢，像强忍着难过把话说完；不要哭腔，不要拖长尾音。"
+    },
+    {
+      "id": "emo_young_female_sad_c",
+      "group": "emotion_v2",
+      "character": "young_female",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "平静地陈述一件让人难过的事，句子之间短暂停顿；声音略低，但语速正常，不要每个字都拖慢。"
+    },
+    {
+      "id": "emo_young_female_angry_b",
+      "group": "emotion_v2",
+      "character": "young_female",
+      "emotion": "angry",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "压低声音，克制地表达不满，咬字更重；不要喊叫，不要提高音调，保持原来的音色。"
+    },
+    {
+      "id": "emo_young_female_angry_c",
+      "group": "emotion_v2",
+      "character": "young_female",
+      "emotion": "angry",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "语气变硬，语速正常，句子短促；愤怒但不要失控，句尾收住。"
+    },
+    {
+      "id": "emo_old_b08_sad_b",
+      "group": "emotion_v2",
+      "character": "old_male_b08",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "声音放低，语速只比平时稍慢，像强忍着难过把话说完；不要哭腔，不要拖长尾音。"
+    },
+    {
+      "id": "short_narrator_neutral",
+      "group": "short_ref",
+      "character": "narrator_short",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。",
+      "notes": "3.2s 短参考，测试 RTF 与克隆稳定性。"
+    },
+    {
+      "id": "short_young_female_neutral",
+      "group": "short_ref",
+      "character": "young_female_short",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。",
+      "notes": "3.6s 短参考，测试 RTF 与克隆稳定性。"
+    },
+    {
+      "id": "short_old_b08_neutral",
+      "group": "short_ref",
+      "character": "old_male_b08_short",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。",
+      "notes": "4.4s 短参考，测试 RTF 与克隆稳定性。"
+    },
+    {
+      "id": "short_narrator_sad_c",
+      "group": "short_ref",
+      "character": "narrator_short",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "平静地陈述一件让人难过的事，句子之间短暂停顿；声音略低，但语速正常，不要每个字都拖慢。",
+      "notes": "短参考 + 克制 sad 指令。"
+    },
+    {
+      "id": "short_narrator_neutral_2",
+      "group": "short_ref",
+      "character": "narrator_short",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。",
+      "notes": "同缓存键重复，测量短参考缓存命中后的 RTF。"
+    },
+    {
+      "id": "short_narrator_neutral_3",
+      "group": "short_ref",
+      "character": "narrator_short",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。",
+      "notes": "同缓存键重复，测量短参考缓存命中后的 RTF。"
+    }
+  ]
+}

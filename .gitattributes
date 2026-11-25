@@ -1,0 +1,96 @@
+# Normalize all text files to LF in the repository and in Windows checkouts.
+# This repository is local-first, but Git history should be deterministic
+# across Windows, Linux and macOS contributors.
+* text=auto eol=lf
+
+# Windows launchers need CRLF; PowerShell scripts stay LF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=lf
+
+# Text formats that benefit from an explicit LF rule.
+*.lock text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.ts text eol=lf
+*.vue text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.ini text eol=lf
+*.txt text eol=lf
+*.sql text eol=lf
+*.mako text eol=lf
+
+# Images and icons.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.bmp binary
+*.tif binary
+*.tiff binary
+*.ico binary
+*.heic binary
+*.avif binary
+*.psd binary
+
+# Audio and video.
+*.wav binary
+*.mp3 binary
+*.flac binary
+*.m4a binary
+*.aac binary
+*.ogg binary
+*.opus binary
+*.wma binary
+*.mp4 binary
+*.webm binary
+*.mov binary
+*.mkv binary
+*.avi binary
+
+# Fonts.
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+
+# Model weights and serialized tensors.
+*.gguf binary
+*.safetensors binary
+*.pt binary
+*.pth binary
+*.onnx binary
+*.bin binary
+*.ckpt binary
+*.h5 binary
+
+# Databases.
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+
+# Archives and documents.
+*.zip binary
+*.7z binary
+*.rar binary
+*.tar binary
+*.gz binary
+*.tgz binary
+*.bz2 binary
+*.xz binary
+*.pdf binary
+*.docx binary
+*.xlsx binary
+*.pptx binary
+
+# Native binaries.
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.pyd binary

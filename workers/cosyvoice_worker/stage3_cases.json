@@ -1,0 +1,429 @@
+{
+  "reference_text": "雨停以后，街上的灯一盏一盏亮起来。风从巷口吹过，带着潮湿的凉意。远处有人慢慢走过，脚步声很轻。",
+  "characters": {
+    "narrator": {
+      "label": "旁白-中年男性",
+      "ref_file": "refs_clean/narrator_01.wav",
+      "reference_text": "雨停以后，街上的灯一盏一盏亮起来。风从巷口吹过，带着潮湿的凉意。远处有人慢慢走过，脚步声很轻。"
+    },
+    "young_female": {
+      "label": "年轻女性",
+      "ref_file": "refs_clean/young_female_01.wav",
+      "reference_text": "雨停以后，街上的灯一盏一盏亮起来。风从巷口吹过，带着潮湿的凉意。远处有人慢慢走过，脚步声很轻。"
+    },
+    "old_male": {
+      "label": "老年男性",
+      "ref_file": "refs_clean/old_male_01.wav",
+      "reference_text": "雨停以后，街上的灯一盏一盏亮起来。风从巷口吹过，带着潮湿的凉意。远处有人慢慢走过，脚步声很轻。"
+    },
+    "legacy_angry": {
+      "label": "阶段 0 愤怒参考音",
+      "ref_file": "refs_clean/legacy_candidate_01.wav",
+      "reference_text": "你竟然敢骗我？我对你那么信任，你居然骗我！"
+    }
+  },
+  "cases": [
+    {
+      "id": "core_narrator_neutral",
+      "group": "core",
+      "character": "narrator",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。"
+    },
+    {
+      "id": "core_narrator_angry",
+      "group": "core",
+      "character": "narrator",
+      "emotion": "angry",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "愤怒而压抑地质问，语速略快，情绪有力度，保持角色音色不变。"
+    },
+    {
+      "id": "core_narrator_sad",
+      "group": "core",
+      "character": "narrator",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "悲伤、压抑地低声说，语速较慢，声音发紧，尾音自然收住，不要拖出气声。"
+    },
+    {
+      "id": "core_young_female_neutral",
+      "group": "core",
+      "character": "young_female",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。"
+    },
+    {
+      "id": "core_young_female_angry",
+      "group": "core",
+      "character": "young_female",
+      "emotion": "angry",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "愤怒而压抑地质问，语速略快，情绪有力度，保持角色音色不变。"
+    },
+    {
+      "id": "core_young_female_sad",
+      "group": "core",
+      "character": "young_female",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "悲伤、压抑地低声说，语速较慢，声音发紧，尾音自然收住，不要拖出气声。"
+    },
+    {
+      "id": "core_old_male_neutral",
+      "group": "core",
+      "character": "old_male",
+      "emotion": "neutral",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。"
+    },
+    {
+      "id": "core_old_male_angry",
+      "group": "core",
+      "character": "old_male",
+      "emotion": "angry",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "愤怒而压抑地质问，语速略快，情绪有力度，保持角色音色不变。"
+    },
+    {
+      "id": "core_old_male_sad",
+      "group": "core",
+      "character": "old_male",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "悲伤、压抑地低声说，语速较慢，声音发紧，尾音自然收住，不要拖出气声。"
+    },
+    {
+      "id": "ab_ref_old_angry_sad",
+      "group": "ab",
+      "character": "legacy_angry",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "悲伤、压抑地低声说，语速较慢，声音发紧，尾音自然收住，不要拖出气声。",
+      "seed": 42,
+      "notes": "阶段 0 愤怒参考音 + 新 sad 指令"
+    },
+    {
+      "id": "ab_ref_neutral_sad",
+      "group": "ab",
+      "character": "narrator",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "悲伤、压抑地低声说，语速较慢，声音发紧，尾音自然收住，不要拖出气声。",
+      "seed": 42,
+      "notes": "中性参考音 + 新 sad 指令"
+    },
+    {
+      "id": "ab_seed_42",
+      "group": "ab",
+      "character": "narrator",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "悲伤、压抑地低声说，语速较慢，声音发紧，尾音自然收住，不要拖出气声。",
+      "seed": 42
+    },
+    {
+      "id": "ab_seed_123",
+      "group": "ab",
+      "character": "narrator",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "悲伤、压抑地低声说，语速较慢，声音发紧，尾音自然收住，不要拖出气声。",
+      "seed": 123
+    },
+    {
+      "id": "ab_seed_2026",
+      "group": "ab",
+      "character": "narrator",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "悲伤、压抑地低声说，语速较慢，声音发紧，尾音自然收住，不要拖出气声。",
+      "seed": 2026
+    },
+    {
+      "id": "ab_mode_instruct_neutral",
+      "group": "ab",
+      "character": "narrator",
+      "emotion": "neutral",
+      "mode": "instruct2",
+      "text": "雨停以后，街上的灯一盏一盏亮起来。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。",
+      "seed": 42
+    },
+    {
+      "id": "ab_mode_zero_shot_neutral",
+      "group": "ab",
+      "character": "narrator",
+      "emotion": "neutral",
+      "mode": "zero_shot",
+      "text": "雨停以后，街上的灯一盏一盏亮起来。",
+      "instruction": "",
+      "prompt_text": "雨停以后，街上的灯一盏一盏亮起来。风从巷口吹过，带着潮湿的凉意。远处有人慢慢走过，脚步声很轻。",
+      "seed": 42,
+      "notes": "参考文本参与 zero_shot，用于验证参考文本条件"
+    },
+    {
+      "id": "ab_mode_zero_shot_sad",
+      "group": "ab",
+      "character": "narrator",
+      "emotion": "sad",
+      "mode": "zero_shot",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "",
+      "prompt_text": "雨停以后，街上的灯一盏一盏亮起来。风从巷口吹过，带着潮湿的凉意。远处有人慢慢走过，脚步声很轻。",
+      "seed": 42,
+      "notes": "zero_shot 无法用指令指定 sad，观察参考音是否只是中性"
+    },
+    {
+      "id": "ab_prompt_correct",
+      "group": "ab",
+      "character": "narrator",
+      "emotion": "neutral",
+      "mode": "zero_shot",
+      "text": "2026年11月25日，他花了12.5万元，买下这间不到30平方米的旧铺子。",
+      "instruction": "",
+      "prompt_text": "雨停以后，街上的灯一盏一盏亮起来。风从巷口吹过，带着潮湿的凉意。远处有人慢慢走过，脚步声很轻。",
+      "seed": 42,
+      "notes": "参考文本正确"
+    },
+    {
+      "id": "ab_prompt_empty",
+      "group": "ab",
+      "character": "narrator",
+      "emotion": "neutral",
+      "mode": "zero_shot",
+      "text": "2026年11月25日，他花了12.5万元，买下这间不到30平方米的旧铺子。",
+      "instruction": "",
+      "prompt_text": "",
+      "seed": 42,
+      "notes": "参考文本为空，与 ab_prompt_correct 对比参考文本条件"
+    },
+    {
+      "id": "ab_prompt_mismatch",
+      "group": "ab",
+      "character": "narrator",
+      "emotion": "neutral",
+      "mode": "zero_shot",
+      "text": "2026年11月25日，他花了12.5万元，买下这间不到30平方米的旧铺子。",
+      "instruction": "",
+      "prompt_text": "清晨的雾还没散，码头上的船一艘一艘靠岸。远处传来汽笛声，空气里有海水的味道。",
+      "seed": 42,
+      "notes": "参考文本故意与参考音不匹配，观察输出是否随文本条件变化"
+    },
+    {
+      "id": "ab_chunk_native",
+      "group": "ab",
+      "character": "narrator",
+      "emotion": "neutral",
+      "text": "夜深了，街上的铺子陆续关门。他沿着屋檐慢慢走，鞋底踩过积水。远处的灯还亮着，像有人一直没有睡。风从身后吹来，他停下脚步，没有回头。",
+      "instruction": "用平静、克制的语气叙述，语速适中，句尾自然收束。",
+      "seed": 42,
+      "chunking": "native"
+    },
+    {
+      "id": "ab_chunk_per_sentence",
+      "group": "ab",
+      "character": "narrator",
+      "emotion": "neutral",
+      "text": "夜深了，街上的铺子陆续关门。他沿着屋檐慢慢走，鞋底踩过积水。远处的灯还亮着，像有人一直没有睡。风从身后吹来，他停下脚步，没有回头。",
+      "instruction": "用平静、克制的语气叙述，语速适中，句尾自然收束。",
+      "seed": 42,
+      "chunking": "per_sentence"
+    },
+    {
+      "id": "ab_post_original",
+      "group": "ab",
+      "character": "narrator",
+      "emotion": "sad",
+      "text": "我等你很久了。你答应过今天一定回来，可现在天都黑了。",
+      "instruction": "悲伤、压抑地低声说，语速较慢，声音发紧，尾音自然收住，不要拖出气声。",
+      "seed": 42,
+      "notes": "后处理对比原始输出"
+    },
+    {
+      "id": "ab_post_processed",
+      "group": "ab",
+      "source_case": "ab_post_original",
+      "postprocess": true,
+      "notes": "去首尾静音 + 10/40ms 淡入淡出 + RMS -20 dBFS"
+    },
+    {
+      "id": "eval_narration_neutral_1",
+      "group": "eval",
+      "character": "narrator",
+      "emotion": "neutral",
+      "text": "夜色落下来，街上的灯一盏一盏亮起来。风从巷口吹过，带着潮湿的凉意。",
+      "instruction": "用平静、克制的语气叙述，语速适中，句尾自然收束。"
+    },
+    {
+      "id": "eval_narration_neutral_2",
+      "group": "eval",
+      "character": "narrator",
+      "emotion": "neutral",
+      "text": "他把信折好，放回抽屉，起身去关窗。楼下的声音很远，像隔着一层雨。",
+      "instruction": "用平静、克制的语气叙述，语速适中，句尾自然收束。"
+    },
+    {
+      "id": "eval_narration_tense",
+      "group": "eval",
+      "character": "narrator",
+      "emotion": "fearful",
+      "text": "门外的脚步声停住了。屋里的人没有动，只听见墙上的钟一下一下地走。",
+      "instruction": "压低声音，带一点紧张感，语速稍慢，不要夸张。"
+    },
+    {
+      "id": "eval_narration_sad",
+      "group": "eval",
+      "character": "narrator",
+      "emotion": "sad",
+      "text": "那年冬天，院子里的树都枯了。后来再没有人提起他的名字。",
+      "instruction": "悲伤而克制地叙述，语速较慢，声音发紧，尾音收住。"
+    },
+    {
+      "id": "eval_narration_numbers",
+      "group": "eval",
+      "character": "narrator",
+      "emotion": "neutral",
+      "text": "2026年11月25日，他花了12.5万元，买下这间不到30平方米的旧铺子。",
+      "instruction": "用平静、清晰的语气叙述，数字读清楚，语速适中。"
+    },
+    {
+      "id": "eval_young_female_neutral",
+      "group": "eval",
+      "character": "young_female",
+      "emotion": "neutral",
+      "text": "你回来了。我还以为，你今天不会来。",
+      "instruction": "用平静、克制的语气说这句话，语速适中，保持角色音色不变。"
+    },
+    {
+      "id": "eval_young_female_happy",
+      "group": "eval",
+      "character": "young_female",
+      "emotion": "happy",
+      "text": "真的吗？你真的把那本书找到了！",
+      "instruction": "开心而克制地说话，带一点笑意，不要喊叫。"
+    },
+    {
+      "id": "eval_young_female_sad",
+      "group": "eval",
+      "character": "young_female",
+      "emotion": "sad",
+      "text": "没关系。反正我早就习惯了，一个人也可以。",
+      "instruction": "悲伤、压抑地低声说，语速较慢，声音发紧，尾音收住。"
+    },
+    {
+      "id": "eval_young_female_angry",
+      "group": "eval",
+      "character": "young_female",
+      "emotion": "angry",
+      "text": "你明明答应过我，为什么还要骗我？",
+      "instruction": "愤怒而压抑地质问，语速略快，保持角色音色不变。"
+    },
+    {
+      "id": "eval_young_female_tender",
+      "group": "eval",
+      "character": "young_female",
+      "emotion": "tender",
+      "text": "别怕，我在这里。你慢慢说，我听着。",
+      "instruction": "温柔、轻声地说话，语速较慢，气息稳定，句尾不要漏气。"
+    },
+    {
+      "id": "eval_young_female_surprised",
+      "group": "eval",
+      "character": "young_female",
+      "emotion": "surprised",
+      "text": "等等，你刚才说什么？他回来了？",
+      "instruction": "惊讶地追问，语速略快，但不要喊叫。"
+    },
+    {
+      "id": "eval_young_female_fearful_inner",
+      "group": "eval",
+      "character": "young_female",
+      "emotion": "fearful",
+      "text": "身后好像有人。可我不敢回头，也不敢停下来。",
+      "instruction": "用气声很轻地表现内心独白，带恐惧感，但不要拖长尾音。"
+    },
+    {
+      "id": "eval_young_female_doubtful",
+      "group": "eval",
+      "character": "young_female",
+      "emotion": "doubtful",
+      "text": "可是，他为什么要这么做？这件事说不通。",
+      "instruction": "疑惑地自言自语，语速适中，句尾自然收束。"
+    },
+    {
+      "id": "eval_old_male_neutral",
+      "group": "eval",
+      "character": "old_male",
+      "emotion": "neutral",
+      "text": "坐吧。茶还热着，慢慢说。",
+      "instruction": "用平静、缓慢的语气说这句话，保持角色音色不变。"
+    },
+    {
+      "id": "eval_old_male_sad",
+      "group": "eval",
+      "character": "old_male",
+      "emotion": "sad",
+      "text": "人老了，很多事记不清了。只有那一天，怎么也忘不掉。",
+      "instruction": "悲伤而克制地回忆，语速较慢，声音发紧，尾音收住。"
+    },
+    {
+      "id": "eval_old_male_determined",
+      "group": "eval",
+      "character": "old_male",
+      "emotion": "determined",
+      "text": "这件事，我既然答应了，就一定会做到底。",
+      "instruction": "坚定而平静地说话，语气有力度，语速适中。"
+    },
+    {
+      "id": "eval_old_male_sarcastic",
+      "group": "eval",
+      "character": "old_male",
+      "emotion": "sarcastic",
+      "text": "好啊，真是好得很。到了这一步，还有什么可说的。",
+      "instruction": "带一点嘲讽和疲惫，语气冷下来，不要夸张。"
+    },
+    {
+      "id": "eval_old_male_tired",
+      "group": "eval",
+      "character": "old_male",
+      "emotion": "tired",
+      "text": "让我歇一会儿。剩下的路，明天再走吧。",
+      "instruction": "疲惫地低声说，语速稍慢，气息下沉，句尾不要拖出气声。"
+    },
+    {
+      "id": "eval_old_male_angry",
+      "group": "eval",
+      "character": "old_male",
+      "emotion": "angry",
+      "text": "你竟然敢骗我？我对你那么信任，你居然骗我！",
+      "instruction": "愤怒而激动地大声质问，语速略快，保持角色音色不变。"
+    },
+    {
+      "id": "eval_old_male_numbers",
+      "group": "eval",
+      "character": "old_male",
+      "emotion": "neutral",
+      "text": "那是1987年，铺子每月租金37.5元，我们一共攒了两年。",
+      "instruction": "用平静、回忆的语气说话，数字读清楚，语速适中。"
+    },
+    {
+      "id": "eval_narration_latin",
+      "group": "eval",
+      "character": "narrator",
+      "emotion": "neutral",
+      "text": "那份 AI 报告放在桌上，CEO 明天上午十点要看。",
+      "instruction": "用平静、清晰的语气叙述，英文缩写逐个字母读清楚，语速适中。"
+    },
+    {
+      "id": "eval_young_female_latin",
+      "group": "eval",
+      "character": "young_female",
+      "emotion": "neutral",
+      "text": "我在 KTV 门口等你，手机只剩 3% 的电了，快点过来。",
+      "instruction": "用平静、稍显着急的语气说，英文缩写和百分比读清楚。"
+    }
+  ]
+}

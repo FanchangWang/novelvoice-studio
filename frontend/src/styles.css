@@ -1,0 +1,168 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans:
+    "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", sans-serif;
+  --font-display:
+    "Iowan Old Style", "Palatino Linotype", "Songti SC", "STSong", "Noto Serif CJK SC",
+    serif;
+  --font-mono:
+    "Cascadia Mono", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+
+  --color-ink-950: #0a0b0d;
+  --color-ink-900: #0e1013;
+  --color-ink-850: #121519;
+  --color-ink-800: #171b20;
+  --color-ink-750: #1c2127;
+  --color-ink-700: #232931;
+  --color-ink-600: #303844;
+
+  --color-fog-100: #e9ebef;
+  --color-fog-200: #ccd1d9;
+  --color-fog-300: #a7afbb;
+  --color-fog-400: #818a97;
+  --color-fog-500: #626b78;
+  --color-fog-600: #4b535f;
+
+  --color-brass-200: #f2ddb4;
+  --color-brass-300: #ecc98a;
+  --color-brass-400: #dfb266;
+  --color-brass-500: #c99a45;
+  --color-brass-600: #a77c2f;
+  --color-brass-700: #7c5a20;
+
+  --color-moss-400: #86b593;
+  --color-moss-500: #5f916e;
+  --color-rust-400: #d98d7c;
+  --color-rust-500: #b96a59;
+  --color-lake-400: #83a9c6;
+}
+
+@layer base {
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  html {
+    background: #0a0b0d;
+  }
+
+  body {
+    margin: 0;
+    color: #ccd1d9;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    background:
+      radial-gradient(1000px 560px at 8% -12%, rgba(201, 154, 69, 0.1), transparent 62%),
+      radial-gradient(900px 520px at 105% -4%, rgba(93, 125, 152, 0.08), transparent 58%),
+      #0a0b0d;
+  }
+
+  ::selection {
+    background: rgba(223, 178, 102, 0.28);
+    color: #f7f2e7;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #303844 transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: #303844;
+    border-radius: 999px;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: #3c4552;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  button,
+  input,
+  textarea {
+    font-family: inherit;
+  }
+}
+
+@utility eyebrow {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: #818a97;
+}
+
+@utility hairline {
+  background: linear-gradient(
+    90deg,
+    rgba(223, 178, 102, 0.5),
+    rgba(223, 178, 102, 0.06) 45%,
+    transparent
+  );
+}
+
+.nv-card {
+  border: 1px solid #232931;
+  background: rgba(18, 21, 25, 0.78);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.02) inset,
+    0 18px 50px -36px rgba(0, 0, 0, 0.9);
+}
+
+.nv-card-hover {
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    transform 180ms ease;
+}
+
+.nv-card-hover:hover {
+  border-color: rgba(167, 124, 47, 0.55);
+  background: rgba(23, 27, 32, 0.92);
+}
+
+.nv-focus:focus-visible {
+  outline: 2px solid rgba(223, 178, 102, 0.75);
+  outline-offset: 2px;
+}
+
+.nv-prose {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  line-height: 2.05;
+  letter-spacing: 0.01em;
+  color: #d5d9df;
+}
+
+.nv-prose-dialogue {
+  color: #e8e0cf;
+}
+
+.nv-prose-heading {
+  color: #dfb266;
+  font-size: 1.18rem;
+  letter-spacing: 0.05em;
+}
+
+.nv-scroll-fade {
+  mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+}
+
+.nv-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
