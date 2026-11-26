@@ -16,6 +16,7 @@ import type {
   ScriptUnitOut,
   ScriptVersionOut,
 } from '@/api/types'
+import UnitAudioVersionsModal from '@/components/production/UnitAudioVersionsModal.vue'
 import { useProductionStore } from '@/stores/production'
 import {
   DELIVERY_LABELS,
@@ -29,9 +30,11 @@ import {
 import { errorMessage } from '@/utils/errors'
 import { formatDateTime } from '@/utils/format'
 import {
+  AUDIO_STATUS_LABELS,
   REVIEW_SEVERITY_LABELS,
   STAGE_STATUS_LABELS,
   UNIT_TYPE_LABELS,
+  audioStatusTagType,
   severityTagType,
   statusTagType,
 } from '@/utils/production'
@@ -57,8 +60,19 @@ const versions = ref<ScriptVersionOut[]>([])
 const loading = ref(false)
 const actionLoading = ref(false)
 const error = ref<string | null>(null)
-const filter = ref<'all' | 'needs_review' | 'dialogue' | 'narration'>('all')
+type ScriptFilter =
+  | 'all'
+  | 'needs_review'
+  | 'dialogue'
+  | 'narration'
+  | 'audio_pending'
+const filter = ref<ScriptFilter>('all')
 const showVersions = ref(false)
+const audioActionUnitId = ref<string | null>(null)
+const showAudioVersions = ref(false)
+const versionUnit = ref<ScriptUnitOut | null>(null)
+
+const TTS_TYPES = new Set(['narration', 'dialogue', 'inner_monologue'])
 
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let lastJobActive = false
@@ -87,20 +101,46 @@ const filteredUnits = computed(() => {
   if (filter.value === 'needs_review') {
     return units.value.filter((unit) => unit.review_status === 'needs_review')
   }
+  if (filter.value === 'audio_pending') {
+    return units.value.filter(
+      (unit) => isTtsUnit(unit) && unit.audio_status !== 'ready',
+    )
+  }
   return units.value.filter((unit) => unit.unit_type === filter.value)
 })
 
 const ttsCount = computed(
-  () =>
-    units.value.filter((unit) =>
-      ['narration', 'dialogue', 'inner_monologue'].includes(unit.unit_type),
-    ).length,
+  () => units.value.filter((unit) => isTtsUnit(unit)).length,
 )
 const cueCount = computed(() => units.value.length - ttsCount.value)
+const readyAudioCount = computed(
+  () =>
+    units.value.filter(
+      (unit) => isTtsUnit(unit) && unit.audio_status === 'ready',
+    ).length,
+)
+const staleAudioCount = computed(
+  () =>
+    units.value.filter(
+      (unit) => isTtsUnit(unit) && unit.audio_status === 'stale',
+    ).length,
+)
+const missingVoiceCount = computed(
+  () => units.value.filter((unit) => isTtsUnit(unit) && !unit.voice_actor_id).length,
+)
+const pendingAudioCount = computed(
+  () =>
+    units.value.filter(
+      (unit) =>
+        isTtsUnit(unit) &&
+        !['ready', 'stale'].includes(unit.audio_status),
+    ).length,
+)
 
-const filterOptions: Array<{ label: string; value: typeof filter.value }> = [
+const filterOptions: Array<{ label: string; value: ScriptFilter }> = [
   { label: '全部单元', value: 'all' },
   { label: '待审核', value: 'needs_review' },
+  { label: '待生成音频', value: 'audio_pending' },
   { label: '对白', value: 'dialogue' },
   { label: '旁白', value: 'narration' },
 ]
@@ -240,6 +280,67 @@ function unitTone(unit: ScriptUnitOut): string {
     return 'border-ink-700 bg-ink-850/60'
   }
   return 'border-ink-700/70 bg-ink-900/40'
+}
+
+function isTtsUnit(unit: ScriptUnitOut): boolean {
+  return TTS_TYPES.has(unit.unit_type)
+}
+
+function audioLabel(unit: ScriptUnitOut): string {
+  return AUDIO_STATUS_LABELS[unit.audio_status] ?? unit.audio_status
+}
+
+function unitAudioSrc(unit: ScriptUnitOut): string {
+  return api.scriptUnitAudioUrl(
+    unit.id,
+    unit.current_audio_asset_id ?? unit.updated_at,
+  )
+}
+
+function audioActionLabel(unit: ScriptUnitOut): string {
+  if (audioActionUnitId.value === unit.id) {
+    return '生成中'
+  }
+  if (unit.audio_status === 'failed') {
+    return '重试'
+  }
+  if (unit.audio_status === 'ready' || unit.audio_status === 'stale') {
+    return '重新生成'
+  }
+  return '生成音频'
+}
+
+async function generateAudio(unit: ScriptUnitOut): Promise<void> {
+  if (audioActionUnitId.value || !unit.voice_actor_id) {
+    return
+  }
+  audioActionUnitId.value = unit.id
+  try {
+    const result = await api.generateScriptUnitAudio(unit.id)
+    message.success(
+      result.audio_status === 'ready'
+        ? '音频已生成，可直接试听'
+        : '音频已生成，但当前输入已变化，已标记为待重新生成',
+    )
+    await load(true)
+    await production.refresh()
+    emit('changed')
+  } catch (err) {
+    message.error(errorMessage(err))
+  } finally {
+    audioActionUnitId.value = null
+  }
+}
+
+function openAudioVersions(unit: ScriptUnitOut): void {
+  versionUnit.value = unit
+  showAudioVersions.value = true
+}
+
+async function handleAudioVersionsChanged(): Promise<void> {
+  await load(true)
+  await production.refresh()
+  emit('changed')
 }
 
 watch(
@@ -404,11 +505,23 @@ onBeforeUnmount(() => {
           :value="filter"
           :options="filterOptions"
           size="small"
-          class="w-32"
+          class="w-36"
           @update:value="filter = $event"
         />
         <span class="text-[10px] text-fog-500">
           {{ filteredUnits.length }} 个单元 · 可配音 {{ ttsCount }} · cue {{ cueCount }}
+        </span>
+        <span class="text-[10px] text-moss-400">
+          已生成 {{ readyAudioCount }} / {{ ttsCount }}
+        </span>
+        <span v-if="pendingAudioCount" class="text-[10px] text-fog-500">
+          待生成 {{ pendingAudioCount }}
+        </span>
+        <span v-if="staleAudioCount" class="text-[10px] text-brass-300">
+          待重生成 {{ staleAudioCount }}
+        </span>
+        <span v-if="missingVoiceCount" class="text-[10px] text-rust-400">
+          未选角 {{ missingVoiceCount }}
         </span>
         <div class="ml-auto flex items-center gap-2">
           <NButton size="tiny" quaternary @click="emit('open-reviews')">查看异常</NButton>
@@ -483,6 +596,18 @@ onBeforeUnmount(() => {
             <span v-else-if="unit.speaker_type" class="text-fog-400">
               {{ SPEAKER_TYPE_LABELS[unit.speaker_type] ?? unit.speaker_type }}
             </span>
+            <span
+              v-if="isTtsUnit(unit) && unit.voice_actor_name"
+              class="text-[9px] text-fog-600"
+            >
+              声线 {{ unit.voice_actor_name }}
+            </span>
+            <span
+              v-else-if="isTtsUnit(unit)"
+              class="text-[9px] text-rust-400"
+            >
+              未分配声线
+            </span>
             <NTag v-if="unit.emotion !== 'neutral'" size="tiny" :bordered="false">
               {{ EMOTION_LABELS[unit.emotion] ?? unit.emotion }}
               · {{ INTENSITY_LABELS[unit.intensity] ?? unit.intensity }}
@@ -494,12 +619,12 @@ onBeforeUnmount(() => {
               待审核
             </NTag>
             <NTag
-              v-if="unit.audio_status !== 'none'"
+              v-if="isTtsUnit(unit) && unit.audio_status !== 'none'"
               size="tiny"
               :bordered="false"
-              :type="unit.audio_status === 'ready' ? 'success' : 'warning'"
+              :type="audioStatusTagType(unit.audio_status)"
             >
-              音频 {{ unit.audio_status }}
+              音频 {{ audioLabel(unit) }}
             </NTag>
             <span class="ml-auto font-mono text-[9px] text-fog-600">
               {{ percent(unit.confidence) }}
@@ -518,6 +643,48 @@ onBeforeUnmount(() => {
           >
             原文：{{ unit.source_text }}
           </p>
+
+          <div
+            v-if="isTtsUnit(unit)"
+            class="mt-2 flex flex-wrap items-center gap-2"
+          >
+            <audio
+              v-if="unit.current_audio_asset_id"
+              :src="unitAudioSrc(unit)"
+              controls
+              preload="none"
+              class="h-8 min-w-[220px] flex-1"
+            />
+            <span v-else class="flex-1 text-[9px] text-fog-600">
+              生成后可在这里直接试听；音效与停顿不进入 TTS。
+            </span>
+            <NButton
+              size="tiny"
+              secondary
+              :type="unit.audio_status === 'ready' ? 'default' : 'primary'"
+              :loading="audioActionUnitId === unit.id"
+              :disabled="Boolean(audioActionUnitId) || !unit.voice_actor_id"
+              @click="generateAudio(unit)"
+            >
+              {{ audioActionLabel(unit) }}
+            </NButton>
+            <NButton size="tiny" quaternary @click="openAudioVersions(unit)">
+              版本
+            </NButton>
+          </div>
+          <p
+            v-if="isTtsUnit(unit) && unit.audio_status === 'stale'"
+            class="mt-1 text-[9px] text-brass-300"
+          >
+            文本、表演或声线已变化，当前音频可继续试听，但建议重新生成。
+          </p>
+          <p
+            v-else-if="isTtsUnit(unit) && unit.audio_status === 'failed'"
+            class="mt-1 text-[9px] text-rust-400"
+          >
+            上次生成失败，可在异常收件箱查看原因后重试。
+          </p>
+
           <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[9px] text-fog-600">
             <span v-if="unit.tts_instruction">提示：{{ unit.tts_instruction }}</span>
             <span v-if="unit.pause_before_ms || unit.pause_after_ms">
@@ -550,5 +717,11 @@ onBeforeUnmount(() => {
         </div>
       </section>
     </template>
+
+    <UnitAudioVersionsModal
+      v-model:show="showAudioVersions"
+      :unit="versionUnit"
+      @changed="handleAudioVersionsChanged"
+    />
   </div>
 </template>

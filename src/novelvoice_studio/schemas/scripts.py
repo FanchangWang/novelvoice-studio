@@ -42,6 +42,8 @@ class ScriptUnitOut(BaseModel):
     speaker_name: str | None = None
     character_state_id: str | None = None
     voice_cast_id: str | None = None
+    voice_actor_id: str | None = None
+    voice_actor_name: str | None = None
     source_text: str
     text: str
     display_text: str | None = None

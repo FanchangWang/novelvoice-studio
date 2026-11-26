@@ -20,7 +20,15 @@ from novelvoice_studio.core.errors import (
     ValidationError,
 )
 from novelvoice_studio.db.types import utc_now
-from novelvoice_studio.models import AudioAsset, Book, Chapter, Character, Segment, VoiceProfile
+from novelvoice_studio.models import (
+    AudioAsset,
+    Book,
+    Chapter,
+    Character,
+    ScriptUnit,
+    Segment,
+    VoiceProfile,
+)
 from novelvoice_studio.schemas.voice import (
     AudioAssetOut,
     AudioVersionListResponse,
@@ -36,7 +44,8 @@ from novelvoice_studio.services.paths import (
 )
 
 # 单 GPU：串行执行整条 Qwen + CosyVoice 链路，避免并发抢占显存。
-_TTS_LOCK = threading.Lock()
+# P7 剧本单元生成复用同一把锁，避免与旧片段生成同时占用显存。
+TTS_LOCK = threading.Lock()
 
 _SUBTYPE_BITS = {
     "PCM_S8": 8,
@@ -179,7 +188,7 @@ class AudioService:
         if not (segment.speech_text or "").strip():
             raise ValidationError("片段文本为空，无法生成")
 
-        with _TTS_LOCK:
+        with TTS_LOCK:
             segment.audio_status = "generating"
             segment.updated_at = utc_now()
             self.session.commit()
@@ -321,8 +330,17 @@ class AudioService:
 
     def asset_audio_path(self, asset_id: str) -> Path:
         asset = self._asset(asset_id)
-        segment = self._segment(asset.segment_id)
-        self._context(segment)
+        if asset.script_unit_id:
+            validate_id(asset.script_unit_id, "unit")
+            unit = self.session.get(ScriptUnit, asset.script_unit_id)
+            if unit is None:
+                raise NotFoundError("音频所属剧本单元不存在")
+            self._book(unit.book_id)
+        elif asset.segment_id:
+            segment = self._segment(asset.segment_id)
+            self._context(segment)
+        else:
+            raise NotFoundError("音频版本没有归属")
         path = resolve_relative(self.settings.data_dir, asset.file_path)
         if not path.is_file():
             raise NotFoundError("音频文件缺失")

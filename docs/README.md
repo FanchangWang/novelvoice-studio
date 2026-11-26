@@ -31,6 +31,7 @@
 - [P4 有声剧本实施报告](reports/P4_SCRIPT_REPORT_2026-11-26.md)：原文对齐、确定性补齐、剧本单元与 cue、版本回退、异常编码与迁移。
 - [P5 全局配音员库与自动选角实施报告](reports/P5_CASTING_REPORT_2026-11-26.md)：全局配音员库、自动/手动选角、旁白与角色阶段声线、剧本单元同步、异常收件箱与中断恢复。
 - [P6 制作台与异常收件箱实施报告](reports/P6_CONSOLE_REPORT_2026-11-26.md)：六页签制作台、全局配音员库、跨书异常收件箱、书库入口调整与 Mock 冒烟。
+- [P7 选中单元音频生成与试听实施报告](reports/P7_UNIT_AUDIO_REPORT_2026-11-26.md)：按剧本单元同步生成 WAV、直接试听、`vNNN` 版本回退、输入指纹与 stale、异常收件箱联动与 Mock 冒烟。
 - [阶段 2 验收报告](reports/STAGE2_REPORT.md)：本机 Ollama 分析、角色/片段审核闭环。
 - [阶段 3 验收报告](reports/STAGE3_REPORT.md)：音色设计、逐段生成、版本回退与引擎服务协议。
 - [阶段 3 音质计划](reports/STAGE3_AUDIO_QUALITY_PLAN.md)：实验矩阵与退出标准。
@@ -46,14 +47,15 @@
 
 阶段 0 的听感 gate 是有条件通过；阶段 3 首轮 gate 不通过，3B 复听通过，3C 接受“参考音先去齿、输出不处理”的链路。功能可用不代表音质已验收，模型许可证核对也仍未完成。详见各报告与 [项目 README](../README.md)。
 
-当前发布版本仍为 0.4.0；0.5.0 主链重构已完成 P1 数据层（迁移 `9f3c2a7b5d10`）、
-P2 全书角色圣经后端、P3 逐章分场/角色状态后端、P4 有声剧本后端、P5 全局配音员/自动选角后端
-与 P6 制作台/全局声音库/异常收件箱前端。
-P2/P3 已做 Mock 与真实本机 Ollama 验收；P4/P5 目前只有 Mock/受控 Provider 自动化验证，
-真实模型剧本质量与真实声线设计效果仍需最终验收；P7 选中单元音频生成与试听尚未实施，原阶段 4 暂停。设计与迁移口径见
+当前发布版本仍为 0.4.0；0.5.0 主链重构 P1–P7 代码已完成（P1 迁移 `9f3c2a7b5d10`；
+P2 全书角色圣经、P3 逐章分场/角色状态、P4 有声剧本、P5 全局配音员/自动选角、
+P6 制作台/全局声音库/异常收件箱，以及 P7 选中单元音频生成/试听；P7 不新增迁移）。
+P2/P3 已做 Mock 与真实本机 Ollama 验收；P4/P5/P7 目前只有 Mock/受控 Provider 自动化验证，
+真实模型剧本质量、真实声线设计与音质仍需最终验收；原阶段 4 暂停。设计与迁移口径见
 [v0.5.0 AI 生产链重构](design/V0_5_0_AI_PRODUCTION_CHAIN_2026-11-26.md)，
 P2 结果见 [P2 实施报告](reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md)，
 P3 结果与限制见 [P3 实施报告](reports/P3_SCENES_REPORT_2026-11-26.md)，
 P4 结果与限制见 [P4 实施报告](reports/P4_SCRIPT_REPORT_2026-11-26.md)，
 P5 结果与限制见 [P5 实施报告](reports/P5_CASTING_REPORT_2026-11-26.md)，
-P6 结果与限制见 [P6 实施报告](reports/P6_CONSOLE_REPORT_2026-11-26.md)。
+P6 结果与限制见 [P6 实施报告](reports/P6_CONSOLE_REPORT_2026-11-26.md)，
+P7 结果与限制见 [P7 实施报告](reports/P7_UNIT_AUDIO_REPORT_2026-11-26.md)。

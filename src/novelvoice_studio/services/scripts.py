@@ -50,6 +50,8 @@ from novelvoice_studio.models import (
     SceneCharacter,
     ScriptUnit,
     ScriptVersion,
+    VoiceActor,
+    VoiceCast,
 )
 from novelvoice_studio.models.segment import DELIVERY_VALUES, EMOTION_VALUES
 from novelvoice_studio.schemas.analysis import AnalysisJobOut
@@ -64,6 +66,10 @@ from novelvoice_studio.schemas.scripts import (
 from novelvoice_studio.services.analysis_serializers import to_job_out
 from novelvoice_studio.services.books import BookService
 from novelvoice_studio.services.paths import new_id, validate_id
+from novelvoice_studio.services.unit_audio import (
+    refresh_stale_units,
+    resolve_unit_voices,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -667,6 +673,9 @@ class ScriptService:
                 if row is not None
                 else []
             )
+            if units and refresh_stale_units(session, units):
+                session.commit()
+            voices = resolve_unit_voices(session, units)
             names = dict(
                 session.execute(
                     select(Character.id, Character.canonical_name).where(
@@ -698,7 +707,14 @@ class ScriptService:
                 open_reviews=len(reviews),
                 job=to_job_out(job) if job else None,
                 version=self._version_out(row, len(units)) if row else None,
-                units=[self._unit_out(unit, names.get(unit.speaker_id)) for unit in units],
+                units=[
+                    self._unit_out(
+                        unit,
+                        names.get(unit.speaker_id),
+                        voices.get(unit.id),
+                    )
+                    for unit in units
+                ],
                 review_items=[self._review_out(item) for item in reviews],
             )
 
@@ -1630,7 +1646,13 @@ class ScriptService:
             updated_at=row.updated_at,
         )
 
-    def _unit_out(self, row: ScriptUnit, speaker_name: str | None) -> ScriptUnitOut:
+    def _unit_out(
+        self,
+        row: ScriptUnit,
+        speaker_name: str | None,
+        voice: tuple[VoiceCast | None, VoiceActor | None] | None = None,
+    ) -> ScriptUnitOut:
+        actor = voice[1] if voice is not None else None
         return ScriptUnitOut(
             id=row.id,
             book_id=row.book_id,
@@ -1644,6 +1666,8 @@ class ScriptService:
             speaker_name=row.speaker_name_snapshot or speaker_name,
             character_state_id=row.character_state_id,
             voice_cast_id=row.voice_cast_id,
+            voice_actor_id=actor.id if actor is not None else None,
+            voice_actor_name=actor.display_name if actor is not None else None,
             source_text=row.source_text,
             text=row.text,
             display_text=row.display_text,

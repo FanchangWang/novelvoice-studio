@@ -15,6 +15,7 @@ from novelvoice_studio.api.v1 import (
     scripts,
     segments,
     system,
+    unit_audio,
     voices,
 )
 
@@ -26,6 +27,7 @@ api_router.include_router(analysis.router)
 api_router.include_router(bible.router)
 api_router.include_router(scenes.router)
 api_router.include_router(scripts.router)
+api_router.include_router(unit_audio.router)
 api_router.include_router(casting.router)
 api_router.include_router(production.router)
 api_router.include_router(characters.router)

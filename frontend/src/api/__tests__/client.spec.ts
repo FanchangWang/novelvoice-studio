@@ -217,4 +217,27 @@ describe('api client', () => {
       update: { review_status: 'approved', unlock_fields: ['emotion'] },
     })
   })
+
+  it('drives selected script unit audio and builds its urls', async () => {
+    installFetch()
+    fetchMock.mockResolvedValue(
+      fakeResponse({ unit_id: 'unit 1', audio_status: 'ready', asset: null }),
+    )
+
+    await api.generateScriptUnitAudio('unit 1')
+    await api.listScriptUnitAudioVersions('unit 1')
+    await api.restoreScriptUnitAudioVersion('unit 1', 'asset 1')
+
+    const [generateCall, versionsCall, restoreCall] = fetchMock.mock.calls
+    expect(generateCall![0]).toBe('/api/v1/script-units/unit%201/generate')
+    expect(generateCall![1]?.method).toBe('POST')
+    expect(versionsCall![0]).toBe('/api/v1/script-units/unit%201/audio-versions')
+    expect(restoreCall![0]).toBe(
+      '/api/v1/script-units/unit%201/audio-versions/asset%201/restore',
+    )
+    expect(restoreCall![1]?.method).toBe('POST')
+    expect(api.scriptUnitAudioUrl('unit 1', 'asset_1')).toBe(
+      '/api/v1/script-units/unit%201/audio?v=asset_1',
+    )
+  })
 })

@@ -53,6 +53,8 @@ import type {
   ScriptStatusResponse,
   ScriptVersionListResponse,
   ScriptVersionOut,
+  ScriptUnitAudioOut,
+  UnitAudioVersionListResponse,
   VoiceActorCreatePayload,
   VoiceActorListResponse,
   VoiceActorOut,
@@ -437,6 +439,38 @@ export const api = {
   segmentAudioUrl(segmentId: string, cacheKey?: string | null): string {
     return audioUrl(
       `/api/v1/segments/${encodeURIComponent(segmentId)}/audio`,
+      cacheKey,
+    )
+  },
+
+  generateScriptUnitAudio(unitId: string): Promise<ScriptUnitAudioOut> {
+    return request<ScriptUnitAudioOut>(
+      `/script-units/${encodeURIComponent(unitId)}/generate`,
+      { method: 'POST' },
+    )
+  },
+
+  listScriptUnitAudioVersions(
+    unitId: string,
+  ): Promise<UnitAudioVersionListResponse> {
+    return request<UnitAudioVersionListResponse>(
+      `/script-units/${encodeURIComponent(unitId)}/audio-versions`,
+    )
+  },
+
+  restoreScriptUnitAudioVersion(
+    unitId: string,
+    assetId: string,
+  ): Promise<ScriptUnitAudioOut> {
+    return request<ScriptUnitAudioOut>(
+      `/script-units/${encodeURIComponent(unitId)}/audio-versions/${encodeURIComponent(assetId)}/restore`,
+      { method: 'POST' },
+    )
+  },
+
+  scriptUnitAudioUrl(unitId: string, cacheKey?: string | null): string {
+    return audioUrl(
+      `/api/v1/script-units/${encodeURIComponent(unitId)}/audio`,
       cacheKey,
     )
   },

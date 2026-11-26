@@ -38,6 +38,29 @@ export const UNIT_TYPE_LABELS: Record<string, string> = {
   pause: '停顿',
 }
 
+export const AUDIO_STATUS_LABELS: Record<string, string> = {
+  not_applicable: '无需配音',
+  none: '未生成',
+  stale: '待重新生成',
+  queued: '排队中',
+  generating: '生成中',
+  ready: '已生成',
+  failed: '失败',
+}
+
+export function audioStatusTagType(status: string): TagType {
+  if (status === 'ready') {
+    return 'success'
+  }
+  if (status === 'failed') {
+    return 'error'
+  }
+  if (status === 'stale' || status === 'queued' || status === 'generating') {
+    return 'warning'
+  }
+  return 'default'
+}
+
 export const ROLE_TIER_LABELS: Record<string, string> = {
   protagonist: '主角',
   major: '重要配角',

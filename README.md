@@ -1,6 +1,6 @@
 # NovelVoice Studio
 
-本地优先的 AI 多角色有声小说制作系统。当前发布版本 **0.4.0**，已完成 **阶段 1：骨架与 TXT 最小闭环**、**阶段 2：AI 小说分析与审核**、**阶段 3：固定音色与单段语音生成** 的应用链路；v0.5.0 AI 生产链重构正在实施，P1–P6 已完成，选中单元音频生成由 P7 接入。批量生成、连续播放与 M4B 导出仍未实现。
+本地优先的 AI 多角色有声小说制作系统。当前发布版本 **0.4.0**，已完成 **阶段 1：骨架与 TXT 最小闭环**、**阶段 2：AI 小说分析与审核**、**阶段 3：固定音色与单段语音生成** 的应用链路；v0.5.0 AI 生产链重构 P1–P7 已实现，等待完整流程评审与验收。批量生成、连续播放与 M4B 导出仍未实现。
 
 ## 当前可用范围
 
@@ -12,7 +12,8 @@
 - 逐章分场与角色状态（v0.5.0 P3）：按角色圣经和剧情时间切分场景，记录地点、时间、视角、气氛、原文范围与出场角色状态；窗口覆盖校验、确定性回退、版本与取消恢复。
 - 有声剧本（v0.5.0 P4）：基于场景与角色状态生成轻改编剧本单元，区分旁白、对白、内心、音效、环境与停顿；原文精确对齐、未覆盖部分确定性补齐、版本回退与开放疑点。
 - 全局配音员库与自动选角（v0.5.0 P5）：跨书复用/收藏/试听配音员；按角色性别、年龄、标签与使用情况自动选角，缺声线时调用本机 VoiceDesign；支持旁白、角色基础声线与角色阶段声线，结果同步到剧本单元；失败与低置信匹配进入异常收件箱。
-- 制作台与异常收件箱（v0.5.0 P6）：六页签制作台（方案/设定集/分场/剧本/选角/异常）、逐章推进与下一步建议；全局配音员库与跨书异常收件箱；支持接受、批量接受与填写原因后忽略。选中剧本单元的音频生成与试听仍待 P7。
+- 制作台与异常收件箱（v0.5.0 P6）：六页签制作台（方案/设定集/分场/剧本/选角/异常）、逐章推进与下一步建议；全局配音员库与跨书异常收件箱；支持接受、批量接受与填写原因后忽略。
+- 选中单元音频与试听（v0.5.0 P7）：剧本页可按单元生成旁白/对白/内心独白 WAV，并在浏览器内直接试听；按单元保留 `vNNN` 版本并支持切回；文本、表演或声线变化自动标记待重新生成；音效、环境与停顿 cue 不进入 TTS；缺声线、参考音缺失或生成失败进入异常收件箱。当前为同步单单元生成，批量队列仍待 0.6.0。
 - 审核工作区：片段筛选与批量修改、角色资料编辑/锁定/合并/拆分、别名候选确认、低置信度与回退片段强制复核。
 - 全书分析任务：进度、取消、失败重试、启动时中断恢复；用户编辑字段在重跑时保留。
 - 声音库（阶段 3）：按书为旁白/角色生成多个音色候选，试听、绑定、切换、删除未使用候选；参考音在绑定时自动去齿。
@@ -100,7 +101,8 @@ v0.5.0 制作台（新书默认入口）：
 4. 逐章运行「剧本」，检查旁白/对白/内心/音效/环境/停顿单元与情绪、表演提示。
 5. 在「选角」自动或手动绑定旁白与角色；需要新声音时先在「声音库」创建全局配音员。
 6. 在「异常」处理阻断、警告与提示；也可从左侧「异常收件箱」跨书集中处理。
-7. P7 完成后，将在剧本单元上生成音频并试听；当前音频进度保持 0/N。
+7. 在「剧本」为带声线的旁白/对白/内心单元点击「生成音频」，生成后可在单元内直接试听；「版本」查看 `vNNN` 历史并切回旧版本。
+8. 文本、表演或声线变化后单元会标记「待重新生成」，旧音频仍可试听；失败与缺声线异常可在制作台或收件箱处理。批量生成与连续播放尚未实现。
 
 0.4.0 书籍工作区（保留）：
 
@@ -204,7 +206,7 @@ npm run build
 pwsh.exe -File ../scripts/check_environment.ps1
 ```
 
-当前基线（2026-11-26）：后端 **152 passed**，前端 **33 passed / 7 files**，`vue-tsc + vite build` 通过。真实 Ollama 验收详情见 [docs/reports/STAGE2_REPORT.md](docs/reports/STAGE2_REPORT.md)，阶段 3 应用验收见 [docs/reports/STAGE3_REPORT.md](docs/reports/STAGE3_REPORT.md)，v0.5.0 P2 全书角色圣经见 [P2 实施报告](docs/reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md)，P3 分场与角色状态见 [P3 实施报告](docs/reports/P3_SCENES_REPORT_2026-11-26.md)，P4 有声剧本见 [P4 实施报告](docs/reports/P4_SCRIPT_REPORT_2026-11-26.md)，P5 全局配音员与自动选角见 [P5 实施报告](docs/reports/P5_CASTING_REPORT_2026-11-26.md)，P6 制作台与异常收件箱见 [P6 实施报告](docs/reports/P6_CONSOLE_REPORT_2026-11-26.md)，阶段 0–3 轻度验收方式见 [验收单](docs/acceptance/STAGE0_3_LIGHT_ACCEPTANCE_2026-11-26.md)。
+当前基线（2026-11-26）：后端 **157 passed**，前端 **34 passed / 7 files**，`vue-tsc + vite build` 通过。真实 Ollama 验收详情见 [docs/reports/STAGE2_REPORT.md](docs/reports/STAGE2_REPORT.md)，阶段 3 应用验收见 [docs/reports/STAGE3_REPORT.md](docs/reports/STAGE3_REPORT.md)，v0.5.0 P2 全书角色圣经见 [P2 实施报告](docs/reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md)，P3 分场与角色状态见 [P3 实施报告](docs/reports/P3_SCENES_REPORT_2026-11-26.md)，P4 有声剧本见 [P4 实施报告](docs/reports/P4_SCRIPT_REPORT_2026-11-26.md)，P5 全局配音员与自动选角见 [P5 实施报告](docs/reports/P5_CASTING_REPORT_2026-11-26.md)，P6 制作台与异常收件箱见 [P6 实施报告](docs/reports/P6_CONSOLE_REPORT_2026-11-26.md)，P7 选中单元音频见 [P7 实施报告](docs/reports/P7_UNIT_AUDIO_REPORT_2026-11-26.md)，阶段 0–3 轻度验收方式见 [验收单](docs/acceptance/STAGE0_3_LIGHT_ACCEPTANCE_2026-11-26.md)。
 
 ## 本机安全边界
 
@@ -238,7 +240,7 @@ docs/
   acceptance/     # 阶段验收方式与验收单
   design/         # v0.5.0 生产链与数据模型设计
   requirements/   # 需求规格说明书
-  reports/        # 阶段 0 POC 与阶段 2/3 报告
+  reports/        # 阶段 0 POC、阶段 2/3 与 v0.5.0 P2–P7 报告
 ```
 
 ## 排错
@@ -261,7 +263,7 @@ docs/
 - 阶段 2：本机 Ollama 分析 → 角色/片段审核闭环；低置信度与回退片段必须人工确认。
 - 阶段 3：音色设计/绑定、逐段 WAV 生成、版本回退、引擎服务启停与真实/模拟切换已实现。音质实验与复听记录见 [阶段 3 音质报告](docs/reports/STAGE3_AUDIO_QUALITY_REPORT.md)、[阶段 3B](docs/reports/STAGE3B_AUDIO_REPAIR_REPORT.md)、[阶段 3C](docs/reports/STAGE3C_SIBILANCE_REPORT.md)；应用验收见 [docs/reports/STAGE3_REPORT.md](docs/reports/STAGE3_REPORT.md)。
 - 阶段 4 尚未实现：批量生成与任务队列、连续播放器、按章节/全书导出 M4B、工程混音与多版本管理。
-- v0.5.0 重构：P1 数据层、P2 全书角色圣经、P3 逐章分场/角色状态、P4 有声剧本、P5 全局配音员/自动选角与 P6 制作台/异常收件箱已完成；P7 选中单元音频生成与试听待实施。详情见 [v0.5.0 AI 生产链重构](docs/design/V0_5_0_AI_PRODUCTION_CHAIN_2026-11-26.md)、[P2 实施报告](docs/reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md)、[P3 实施报告](docs/reports/P3_SCENES_REPORT_2026-11-26.md)、[P4 实施报告](docs/reports/P4_SCRIPT_REPORT_2026-11-26.md)、[P5 实施报告](docs/reports/P5_CASTING_REPORT_2026-11-26.md) 与 [P6 实施报告](docs/reports/P6_CONSOLE_REPORT_2026-11-26.md)。
+- v0.5.0 重构：P1 数据层、P2 全书角色圣经、P3 逐章分场/角色状态、P4 有声剧本、P5 全局配音员/自动选角、P6 制作台/异常收件箱与 P7 选中单元音频生成/试听已完成，等待完整流程评审与验收。详情见 [v0.5.0 AI 生产链重构](docs/design/V0_5_0_AI_PRODUCTION_CHAIN_2026-11-26.md)、[P2 实施报告](docs/reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md)、[P3 实施报告](docs/reports/P3_SCENES_REPORT_2026-11-26.md)、[P4 实施报告](docs/reports/P4_SCRIPT_REPORT_2026-11-26.md)、[P5 实施报告](docs/reports/P5_CASTING_REPORT_2026-11-26.md)、[P6 实施报告](docs/reports/P6_CONSOLE_REPORT_2026-11-26.md) 与 [P7 实施报告](docs/reports/P7_UNIT_AUDIO_REPORT_2026-11-26.md)。
 - 阶段 0 的听感 gate 已由用户本人于 2026-11-25 有条件通过；sad 表现力、句尾气声与参考文本条件仍是质量待办。**许可证核对（含 `ttsfrd` / `wetext`）尚未完成**，不能视为已签收。
 
 详细架构口径见 [docs/ARCHITECTURE_NOTES.md](docs/ARCHITECTURE_NOTES.md)，阶段 2 验收记录见 [docs/reports/STAGE2_REPORT.md](docs/reports/STAGE2_REPORT.md)，POC 实测见 [docs/reports/POC_REPORT.md](docs/reports/POC_REPORT.md)，完整需求见 [需求规格说明书 v1.0](docs/requirements/NovelVoice_Studio_需求规格说明书_v1.0.md)，全部文档见 [docs/README.md](docs/README.md)。

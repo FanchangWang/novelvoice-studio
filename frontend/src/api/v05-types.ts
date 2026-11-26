@@ -237,6 +237,8 @@ export interface ScriptUnitOut {
   speaker_name: string | null
   character_state_id: string | null
   voice_cast_id: string | null
+  voice_actor_id: string | null
+  voice_actor_name: string | null
   source_text: string
   text: string
   display_text: string | null
@@ -296,6 +298,44 @@ export interface ScriptStateResponse extends ScriptStatusResponse {
 export interface ScriptVersionListResponse {
   chapter_id: string
   items: ScriptVersionOut[]
+  total: number
+}
+
+/* ------------------------------ P7：单元音频 ------------------------------ */
+
+export interface UnitAudioAssetOut {
+  id: string
+  script_unit_id: string
+  voice_actor_id: string | null
+  voice_actor_name: string | null
+  version: number
+  format: string
+  sample_rate: number
+  channels: number
+  sample_width_bits: number
+  duration_ms: number
+  file_size_bytes: number
+  tts_provider: string | null
+  tts_model: string | null
+  is_valid: boolean
+  is_current: boolean
+  audio_url: string
+  created_at: string
+}
+
+export interface ScriptUnitAudioOut {
+  unit_id: string
+  audio_status: string
+  voice_actor_id: string | null
+  voice_actor_name: string | null
+  render_hash: string | null
+  asset: UnitAudioAssetOut | null
+}
+
+export interface UnitAudioVersionListResponse {
+  unit_id: string
+  current_asset_id: string | null
+  items: UnitAudioAssetOut[]
   total: number
 }
 

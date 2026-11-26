@@ -34,6 +34,7 @@ from novelvoice_studio.schemas.production import (
 )
 from novelvoice_studio.services.analysis_serializers import to_job_out
 from novelvoice_studio.services.paths import validate_id
+from novelvoice_studio.services.unit_audio import refresh_stale_units
 
 ACTIVE_JOB_STATUSES = ("pending", "running")
 TTS_UNIT_TYPES = {"narration", "dialogue", "inner_monologue"}
@@ -126,6 +127,17 @@ class ProductionService:
         version_by_chapter = {item.chapter_id: item for item in versions}
         unit_counts: dict[str, dict[str, int]] = {}
         if versions:
+            active_units = list(
+                self.session.scalars(
+                    select(ScriptUnit).where(
+                        ScriptUnit.script_version_id.in_(
+                            [item.id for item in versions]
+                        )
+                    )
+                )
+            )
+            if refresh_stale_units(self.session, active_units):
+                self.session.commit()
             rows = self.session.execute(
                 select(
                     ScriptUnit.script_version_id,
