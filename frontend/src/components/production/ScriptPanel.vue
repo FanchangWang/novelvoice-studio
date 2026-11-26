@@ -30,11 +30,15 @@ import {
 import { errorMessage } from '@/utils/errors'
 import { formatDateTime } from '@/utils/format'
 import {
+  ADAPTATION_LEVEL_LABELS,
   AUDIO_STATUS_LABELS,
   REVIEW_SEVERITY_LABELS,
+  SCRIPT_VERSION_STATUS_LABELS,
   STAGE_STATUS_LABELS,
   UNIT_TYPE_LABELS,
   audioStatusTagType,
+  jobStatusLabel,
+  jobTypeLabel,
   severityTagType,
   statusTagType,
 } from '@/utils/production'
@@ -286,6 +290,25 @@ function isTtsUnit(unit: ScriptUnitOut): boolean {
   return TTS_TYPES.has(unit.unit_type)
 }
 
+function unitTypeLabel(unit: ScriptUnitOut): string {
+  return UNIT_TYPE_LABELS[unit.unit_type] ?? unit.unit_type
+}
+
+function speakerLabel(unit: ScriptUnitOut): string {
+  if (unit.speaker_name) {
+    return unit.speaker_name
+  }
+  if (unit.speaker_type) {
+    return SPEAKER_TYPE_LABELS[unit.speaker_type] ?? unit.speaker_type
+  }
+  return ''
+}
+
+function showSpeaker(unit: ScriptUnitOut): boolean {
+  const label = speakerLabel(unit)
+  return Boolean(label) && label !== unitTypeLabel(unit)
+}
+
 function audioLabel(unit: ScriptUnitOut): string {
   return AUDIO_STATUS_LABELS[unit.audio_status] ?? unit.audio_status
 }
@@ -395,7 +418,8 @@ onBeforeUnmount(() => {
               {{ STAGE_STATUS_LABELS[state.script_status] ?? state.script_status }}
             </NTag>
             <NTag v-if="activeVersion" size="small" :bordered="false">
-              v{{ activeVersion.version }} · {{ activeVersion.adaptation_level }}
+              v{{ activeVersion.version }} ·
+              {{ ADAPTATION_LEVEL_LABELS[activeVersion.adaptation_level] ?? activeVersion.adaptation_level }}
             </NTag>
             <NTag v-if="state?.open_reviews" size="small" :bordered="false" type="warning">
               异常 {{ state.open_reviews }}
@@ -455,7 +479,8 @@ onBeforeUnmount(() => {
             :class="jobActive ? 'animate-pulse bg-brass-400' : job.status === 'failed' ? 'bg-rust-500' : 'bg-moss-400'"
           />
           <span class="text-[11px] text-fog-300">
-            {{ job.job_type }} · {{ job.status }} · {{ Math.round((job.progress || 0) * 100) }}%
+            {{ jobTypeLabel(job.job_type) }} · {{ jobStatusLabel(job.status) }} ·
+            {{ Math.round((job.progress || 0) * 100) }}%
           </span>
           <span class="text-[10px] text-fog-500">{{ job.completed_items }} / {{ job.total_items }}</span>
           <span v-if="job.error_message" class="text-[10px] text-rust-400">{{ job.error_message }}</span>
@@ -508,21 +533,25 @@ onBeforeUnmount(() => {
           class="w-36"
           @update:value="filter = $event"
         />
-        <span class="text-[10px] text-fog-500">
+        <span class="text-sm text-fog-500">
           {{ filteredUnits.length }} 个单元 · 可配音 {{ ttsCount }} · cue {{ cueCount }}
         </span>
-        <span class="text-[10px] text-moss-400">
+        <span aria-hidden="true" class="text-ink-600">·</span>
+        <span class="text-sm text-moss-400">
           已生成 {{ readyAudioCount }} / {{ ttsCount }}
         </span>
-        <span v-if="pendingAudioCount" class="text-[10px] text-fog-500">
-          待生成 {{ pendingAudioCount }}
-        </span>
-        <span v-if="staleAudioCount" class="text-[10px] text-brass-300">
-          待重生成 {{ staleAudioCount }}
-        </span>
-        <span v-if="missingVoiceCount" class="text-[10px] text-rust-400">
-          未选角 {{ missingVoiceCount }}
-        </span>
+        <template v-if="pendingAudioCount">
+          <span aria-hidden="true" class="text-ink-600">·</span>
+          <span class="text-sm text-fog-500">待生成 {{ pendingAudioCount }}</span>
+        </template>
+        <template v-if="staleAudioCount">
+          <span aria-hidden="true" class="text-ink-600">·</span>
+          <span class="text-sm text-brass-300">待重生成 {{ staleAudioCount }}</span>
+        </template>
+        <template v-if="missingVoiceCount">
+          <span aria-hidden="true" class="text-ink-600">·</span>
+          <span class="text-sm text-rust-400">未选角 {{ missingVoiceCount }}</span>
+        </template>
         <div class="ml-auto flex items-center gap-2">
           <NButton size="tiny" quaternary @click="emit('open-reviews')">查看异常</NButton>
           <NButton size="tiny" quaternary @click="showVersions = !showVersions">
@@ -544,12 +573,12 @@ onBeforeUnmount(() => {
           >
             <span class="font-mono text-fog-300">v{{ version.version }}</span>
             <NTag size="tiny" :bordered="false" :type="statusTagType(version.status)">
-              {{ version.status }}
+              {{ SCRIPT_VERSION_STATUS_LABELS[version.status] ?? version.status }}
             </NTag>
             <NTag v-if="version.is_active" size="tiny" :bordered="false" type="success">
               当前版本
             </NTag>
-            <span class="text-fog-500">{{ version.unit_count }} 个单元 · {{ version.adaptation_level }}</span>
+            <span class="text-fog-500">{{ version.unit_count }} 个单元 · {{ ADAPTATION_LEVEL_LABELS[version.adaptation_level] ?? version.adaptation_level }}</span>
             <span class="text-fog-600">{{ formatDateTime(version.created_at) }}</span>
             <div class="ml-auto flex gap-1">
               <NButton
@@ -580,82 +609,90 @@ onBeforeUnmount(() => {
         v{{ selectedChapter?.scene_version }}。建议重新生成剧本，避免说话人与状态不一致。
       </div>
 
-      <div class="space-y-2">
+      <div class="space-y-2.5">
         <article
           v-for="unit in filteredUnits"
           :key="unit.id"
-          class="rounded-xl border px-4 py-3"
+          class="rounded-xl border px-4 py-3.5"
           :class="unitTone(unit)"
         >
-          <div class="flex flex-wrap items-center gap-1.5 text-[10px]">
-            <span class="font-mono text-fog-600">{{ String(unit.unit_index + 1).padStart(3, '0') }}</span>
-            <NTag size="tiny" :bordered="false" type="info">
-              {{ UNIT_TYPE_LABELS[unit.unit_type] ?? unit.unit_type }}
-            </NTag>
-            <span v-if="unit.speaker_name" class="font-medium text-fog-200">{{ unit.speaker_name }}</span>
-            <span v-else-if="unit.speaker_type" class="text-fog-400">
-              {{ SPEAKER_TYPE_LABELS[unit.speaker_type] ?? unit.speaker_type }}
-            </span>
-            <span
-              v-if="isTtsUnit(unit) && unit.voice_actor_name"
-              class="text-[9px] text-fog-600"
-            >
-              声线 {{ unit.voice_actor_name }}
-            </span>
-            <span
-              v-else-if="isTtsUnit(unit)"
-              class="text-[9px] text-rust-400"
-            >
-              未分配声线
-            </span>
-            <NTag v-if="unit.emotion !== 'neutral'" size="tiny" :bordered="false">
-              {{ EMOTION_LABELS[unit.emotion] ?? unit.emotion }}
-              · {{ INTENSITY_LABELS[unit.intensity] ?? unit.intensity }}
-            </NTag>
-            <NTag v-if="unit.delivery !== 'normal'" size="tiny" :bordered="false" type="warning">
-              {{ DELIVERY_LABELS[unit.delivery] ?? unit.delivery }}
-            </NTag>
-            <NTag v-if="unit.review_status === 'needs_review'" size="tiny" :bordered="false" type="warning">
-              待审核
-            </NTag>
-            <NTag
-              v-if="isTtsUnit(unit) && unit.audio_status !== 'none'"
-              size="tiny"
-              :bordered="false"
-              :type="audioStatusTagType(unit.audio_status)"
-            >
-              音频 {{ audioLabel(unit) }}
-            </NTag>
-            <span class="ml-auto font-mono text-[9px] text-fog-600">
-              {{ percent(unit.confidence) }}
+          <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+            <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
+              <span class="font-mono text-fog-500">{{ String(unit.unit_index + 1).padStart(3, '0') }}</span>
+              <NTag size="tiny" :bordered="false" type="info">
+                {{ unitTypeLabel(unit) }}
+              </NTag>
+              <span v-if="showSpeaker(unit)" class="font-medium text-fog-100">
+                {{ speakerLabel(unit) }}
+              </span>
+              <span v-if="isTtsUnit(unit)" class="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                <span class="text-fog-500">声线</span>
+                <span v-if="unit.voice_actor_name" class="text-fog-300">
+                  {{ unit.voice_actor_name }}
+                </span>
+                <span v-else class="text-rust-400">未分配</span>
+              </span>
+              <NTag
+                v-if="isTtsUnit(unit) && unit.audio_status !== 'none'"
+                size="tiny"
+                :bordered="false"
+                :type="audioStatusTagType(unit.audio_status)"
+              >
+                音频 {{ audioLabel(unit) }}
+              </NTag>
+            </div>
+            <span class="shrink-0 text-sm text-fog-500">
+              置信度 <span class="font-mono">{{ percent(unit.confidence) }}</span>
             </span>
           </div>
 
+          <div
+            v-if="unit.emotion !== 'neutral' || unit.delivery !== 'normal' || unit.review_status === 'needs_review'"
+            class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-fog-500"
+          >
+            <span v-if="unit.emotion !== 'neutral'" class="inline-flex items-center gap-1.5">
+              <span>情绪</span>
+              <NTag size="tiny" :bordered="false">
+                {{ EMOTION_LABELS[unit.emotion] ?? unit.emotion }}
+                · {{ INTENSITY_LABELS[unit.intensity] ?? unit.intensity }}
+              </NTag>
+            </span>
+            <span v-if="unit.delivery !== 'normal'" class="inline-flex items-center gap-1.5">
+              <span>表演</span>
+              <NTag size="tiny" :bordered="false" type="warning">
+                {{ DELIVERY_LABELS[unit.delivery] ?? unit.delivery }}
+              </NTag>
+            </span>
+            <NTag v-if="unit.review_status === 'needs_review'" size="tiny" :bordered="false" type="warning">
+              待审核
+            </NTag>
+          </div>
+
           <p
-            class="mt-1.5 whitespace-pre-wrap text-[12px] leading-6"
+            class="mt-2.5 whitespace-pre-wrap text-base leading-7"
             :class="unit.unit_type === 'dialogue' ? 'text-brass-200' : 'text-fog-200'"
           >
             {{ unitText(unit) }}
           </p>
           <p
             v-if="unit.source_text && unit.source_text !== unit.text"
-            class="mt-1 line-clamp-2 text-[10px] leading-5 text-fog-500"
+            class="mt-1.5 line-clamp-2 text-fog-500"
           >
             原文：{{ unit.source_text }}
           </p>
 
           <div
             v-if="isTtsUnit(unit)"
-            class="mt-2 flex flex-wrap items-center gap-2"
+            class="mt-2.5 flex flex-wrap items-center gap-2"
           >
             <audio
               v-if="unit.current_audio_asset_id"
               :src="unitAudioSrc(unit)"
               controls
               preload="none"
-              class="h-8 min-w-[220px] flex-1"
+              class="h-9 min-w-[240px] flex-1"
             />
-            <span v-else class="flex-1 text-[9px] text-fog-600">
+            <span v-else class="flex-1 text-fog-500">
               生成后可在这里直接试听；音效与停顿不进入 TTS。
             </span>
             <NButton
@@ -674,18 +711,18 @@ onBeforeUnmount(() => {
           </div>
           <p
             v-if="isTtsUnit(unit) && unit.audio_status === 'stale'"
-            class="mt-1 text-[9px] text-brass-300"
+            class="mt-1.5 text-sm text-brass-300"
           >
             文本、表演或声线已变化，当前音频可继续试听，但建议重新生成。
           </p>
           <p
             v-else-if="isTtsUnit(unit) && unit.audio_status === 'failed'"
-            class="mt-1 text-[9px] text-rust-400"
+            class="mt-1.5 text-sm text-rust-400"
           >
             上次生成失败，可在异常收件箱查看原因后重试。
           </p>
 
-          <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[9px] text-fog-600">
+          <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-fog-500">
             <span v-if="unit.tts_instruction">提示：{{ unit.tts_instruction }}</span>
             <span v-if="unit.pause_before_ms || unit.pause_after_ms">
               停顿 {{ unit.pause_before_ms }}/{{ unit.pause_after_ms }}ms
@@ -706,13 +743,13 @@ onBeforeUnmount(() => {
             :key="item.id"
             type="button"
             class="flex w-full items-start gap-2 rounded-lg bg-ink-900/60 px-2.5 py-2 text-left"
+            :title="item.code"
             @click="emit('open-reviews')"
           >
             <NTag size="tiny" :bordered="false" :type="severityTagType(item.severity)">
               {{ REVIEW_SEVERITY_LABELS[item.severity] ?? item.severity }}
             </NTag>
             <span class="min-w-0 flex-1 text-[10px] leading-5 text-fog-300">{{ item.title }}</span>
-            <span class="font-mono text-[9px] text-fog-600">{{ item.code }}</span>
           </button>
         </div>
       </section>

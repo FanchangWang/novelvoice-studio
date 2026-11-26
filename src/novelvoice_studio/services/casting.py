@@ -110,6 +110,10 @@ ROLE_ORDER = {
     "unknown": 4,
 }
 REQUIRED_ROLE_TIERS = {"protagonist", "major", "minor"}
+# 全书独立声线预算：旁白之外只给最重要的角色单独设计声线，其余复用声线池。
+MAX_DEDICATED_VOICES = 20
+# 一本书最多保留多少个独立配音员（防止小角色不断新建）。
+MAX_VOICE_ACTORS_PER_BOOK = 30
 TTS_UNIT_TYPES = {"narration", "dialogue", "inner_monologue"}
 CUE_UNIT_TYPES = {"sfx", "ambience", "pause"}
 _CAST_REVIEW_PREFIX = "cast_"
@@ -165,6 +169,8 @@ class _Target:
     personality_tags: list[str] = field(default_factory=list)
     voice_note: str | None = None
     language: str = "zh-CN"
+    dedicated: bool = True
+    chapter_sequences: list[int] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -185,6 +191,12 @@ class _Target:
             personality_tags=_clean_tags(raw.get("personality_tags")),
             voice_note=_clean(raw.get("voice_note"), 300),
             language=str(raw.get("language") or "zh-CN"),
+            dedicated=bool(raw.get("dedicated", True)),
+            chapter_sequences=[
+                int(item)
+                for item in (raw.get("chapter_sequences") or [])
+                if isinstance(item, (int, float, str)) and str(item).lstrip("-").isdigit()
+            ],
         )
 
 
@@ -636,6 +648,20 @@ class CastingService:
                 ]
                 book_id = job.book_id
                 total = max(1, len(targets))
+                bible = self._active_bible(session, book_id)
+                presence = (
+                    self._appearance_map(session, book_id, bible)
+                    if bible is not None
+                    else {}
+                )
+                base_voices = len(
+                    {
+                        cast.voice_actor_id
+                        for cast in self._active_casts(session, book_id)
+                        if cast.voice_actor_id
+                    }
+                )
+                scene_presence = self._scene_map(session, book_id)
 
             generated = 0
             reused = 0
@@ -646,7 +672,14 @@ class CastingService:
                     current = session.get(GenerationJob, job_id)
                     if current is None or current.status == "cancelled":
                         return
-                outcome = self._process_target(book_id, target, job_id)
+                outcome = self._process_target(
+                    book_id,
+                    target,
+                    job_id,
+                    presence=presence,
+                    scene_presence=scene_presence,
+                    voices_used=base_voices + generated,
+                )
                 status = outcome.get("status")
                 if status == "generated":
                     generated += 1
@@ -736,7 +769,14 @@ class CastingService:
                 logger.exception("写入自动选角失败状态时出错")
 
     def _process_target(
-        self, book_id: str, target: _Target, job_id: str
+        self,
+        book_id: str,
+        target: _Target,
+        job_id: str,
+        *,
+        presence: dict[str, list[int]] | None = None,
+        scene_presence: dict[str, set[str]] | None = None,
+        voices_used: int = 0,
     ) -> dict[str, Any]:
         with session_scope(self.session_factory) as session:
             book = self._book(session, book_id)
@@ -770,6 +810,45 @@ class CastingService:
                         message=f"匹配分数 {confidence:.2f}，建议试听后再继续。",
                     )
                 return {**outcome, "status": "reused"}
+            # 次要角色不单独设计声线：优先复用已选配音员，且不能与已绑定角色同场出现。
+            if not target.dedicated:
+                shared = self._pick_shared_actor(
+                    book_id,
+                    target,
+                    presence or {},
+                    scene_presence or {},
+                    allow_conflict=voices_used >= MAX_VOICE_ACTORS_PER_BOOK,
+                )
+                if shared is not None:
+                    actor_id, confidence, reason, conflict = shared
+                    self._prepare_actor_reference(actor_id)
+                    outcome = self._create_cast(
+                        book_id,
+                        target,
+                        actor_id,
+                        source="auto",
+                        confidence=confidence,
+                        reason=reason,
+                        job_id=job_id,
+                    )
+                    if outcome.get("status") == "skipped":
+                        return outcome
+                    if conflict:
+                        self._target_review(
+                            book_id,
+                            target,
+                            job_id,
+                            code="cast_shared_conflict",
+                            severity="info",
+                            title=f"“{target.character_name or '旁白'}”与同声线角色同场出现",
+                            message="声线池已满，只能复用与既有角色出场重叠的声线；建议试听后手动换人。",
+                        )
+                    return {**outcome, "status": "reused"}
+                if voices_used >= MAX_VOICE_ACTORS_PER_BOOK:
+                    raise ConflictError(
+                        "声线池已满，但没有找到性别/年龄合适且不同场的可复用声线",
+                        code="voice_pool_exhausted",
+                    )
             actor_id = self._generate_actor(book_id, book_title, target)
             self._prepare_actor_reference(actor_id)
             outcome = self._create_cast(
@@ -1021,6 +1100,107 @@ class CastingService:
             return None
         return min(1.0, score)
 
+    def _scene_map(self, session: Session, book_id: str) -> dict[str, set[str]]:
+        """角色当前分场版本中实际出场的场景集合，用于判断能不能共用声线。"""
+        rows = session.execute(
+            select(SceneCharacter.character_id, Scene.id)
+            .join(Scene, Scene.id == SceneCharacter.scene_id)
+            .join(Chapter, Chapter.id == Scene.chapter_id)
+            .where(
+                Chapter.book_id == book_id,
+                Chapter.scene_version > 0,
+                Scene.analysis_version == Chapter.scene_version,
+            )
+        ).all()
+        found: dict[str, set[str]] = {}
+        for character_id, scene_id in rows:
+            if character_id and scene_id:
+                found.setdefault(character_id, set()).add(scene_id)
+        return found
+
+    def _pick_shared_actor(
+        self,
+        book_id: str,
+        target: _Target,
+        presence: dict[str, list[int]],
+        scene_presence: dict[str, set[str]],
+        *,
+        allow_conflict: bool = False,
+    ) -> tuple[str, float, str, bool] | None:
+        """给次要角色挑一个可复用的声线。
+
+        规则：同一角色同一年龄段只用一个声线；不同角色共用声线时，
+        不能在同一场景（无分场数据时按同一章）同时出现。
+        """
+        with session_scope(self.session_factory) as session:
+            casts = self._active_casts(session, book_id)
+            assigned: dict[str, set[str]] = {}
+            for cast in casts:
+                if cast.character_id and cast.voice_actor_id:
+                    assigned.setdefault(cast.voice_actor_id, set()).add(cast.character_id)
+            actors = list(
+                session.scalars(
+                    select(VoiceActor).where(
+                        VoiceActor.status == "ready",
+                        VoiceActor.reference_audio_path.is_not(None),
+                    )
+                )
+            )
+            target_sequences = set(target.chapter_sequences)
+            target_scenes = (
+                scene_presence.get(target.character_id, set())
+                if target.character_id
+                else set()
+            )
+            options: list[tuple[int, int, float, int, str]] = []
+            for actor in actors:
+                try:
+                    self._actor_file(actor)
+                except (NotFoundError, AppError):
+                    continue
+                score = self._score_actor(target, actor)
+                if score is None:
+                    continue
+                conflict = False
+                same_character = bool(
+                    target.character_id
+                    and target.character_id in assigned.get(actor.id, set())
+                )
+                for character_id in assigned.get(actor.id, set()):
+                    if character_id == target.character_id:
+                        continue
+                    other_scenes = scene_presence.get(character_id, set())
+                    if target_scenes and other_scenes:
+                        if target_scenes & other_scenes:
+                            conflict = True
+                            break
+                    elif target_sequences and presence.get(character_id):
+                        if target_sequences & set(presence[character_id]):
+                            conflict = True
+                            break
+                if conflict and not allow_conflict:
+                    continue
+                options.append(
+                    (
+                        1 if conflict else 0,
+                        0 if same_character else (0 if assigned.get(actor.id) else 1),
+                        -score,
+                        len(assigned.get(actor.id, set())),
+                        actor.id,
+                    )
+                )
+            if not options:
+                return None
+            options.sort()
+            has_conflict, _existing, negative_score, assignments, actor_id = options[0]
+            confidence = round(min(0.85, -negative_score), 3)
+            reason = "次要角色共用声线"
+            if has_conflict:
+                reason += "（声线池已满，与既有角色出场有重叠）"
+            elif assignments:
+                reason = "次要角色共用声线（出场不同场）"
+            return actor_id, confidence, reason, bool(has_conflict)
+
     # --------------------------------------------------------------- targets
 
     def _targets(
@@ -1040,19 +1220,102 @@ class CastingService:
                 )
             )
         characters = self._plan_characters(session, book_id, bible)
+        multi_stage: set[str] = set()
         for item in characters:
             if not item["cast_required"]:
                 continue
             character: Character = item["character"]
-            if ("character", character.id, None) not in cast_map:
-                targets.append(item["base_target"])
             stages = item["stages"]
             if len(stages) > 1:
+                # 年龄会变化：每个阶段一条声线；通用声线放在阶段之后，
+                # 直接复用其中一条阶段声线，避免同一个人多出一把嗓子。
+                multi_stage.add(character.id)
                 for stage in stages:
                     key = ("character_stage", character.id, stage["age_stage"])
                     if key not in cast_map:
                         targets.append(stage["target"])
+                if ("character", character.id, None) not in cast_map:
+                    targets.append(item["base_target"])
+            elif ("character", character.id, None) not in cast_map:
+                targets.append(item["base_target"])
+        appearances = self._appearance_map(session, book_id, bible)
+        dedicated = self._dedicated_character_ids(session, book_id, appearances)
+        for target in targets:
+            if target.character_id is None:
+                continue
+            target.chapter_sequences = appearances.get(target.character_id, [])
+            target.dedicated = (
+                target.character_id in dedicated
+                and not (
+                    target.scope == "character"
+                    and target.character_id in multi_stage
+                )
+            )
         return targets
+
+    def _appearance_map(
+        self, session: Session, book_id: str, bible: BookBible
+    ) -> dict[str, list[int]]:
+        """角色在已覆盖章节中的出场序号；用于判断两个小角色能否共用一个声线。"""
+        characters = list(
+            session.scalars(
+                select(Character).where(
+                    Character.book_id == book_id,
+                    Character.merged_into_id.is_(None),
+                )
+            )
+        )
+        index: dict[str, str] = {}
+        for character in characters:
+            index[_clean(character.canonical_name, 120).casefold()] = character.id
+            for alias in character.aliases_json or []:
+                name = alias.get("name") if isinstance(alias, dict) else alias
+                cleaned = _clean(name, 120)
+                if cleaned and cleaned.casefold() not in index:
+                    index[cleaned.casefold()] = character.id
+        found: dict[str, set[int]] = {}
+        for row in (bible.content_json or {}).get("chapter_timelines") or []:
+            if not isinstance(row, dict):
+                continue
+            sequence = row.get("sequence")
+            if not isinstance(sequence, int):
+                continue
+            for name in row.get("characters") or []:
+                cleaned = _clean(name, 120)
+                character_id = index.get(cleaned.casefold()) if cleaned else None
+                if character_id:
+                    found.setdefault(character_id, set()).add(sequence)
+        return {key: sorted(value) for key, value in found.items()}
+
+    def _dedicated_character_ids(
+        self,
+        session: Session,
+        book_id: str,
+        appearances: dict[str, list[int]],
+    ) -> set[str]:
+        """挑出值得单独设计声线的角色：主角优先，其次按出场章节数。"""
+        characters = list(
+            session.scalars(
+                select(Character).where(
+                    Character.book_id == book_id,
+                    Character.merged_into_id.is_(None),
+                )
+            )
+        )
+        ranked = sorted(
+            characters,
+            key=lambda item: (
+                ROLE_ORDER.get(item.role_tier or "unknown", 4),
+                -len(appearances.get(item.id, [])),
+                item.canonical_name,
+            ),
+        )
+        leads = [item for item in ranked if item.role_tier in {"protagonist", "major"}]
+        rest = [item for item in ranked if item.role_tier not in {"protagonist", "major"}]
+        chosen = leads[:MAX_DEDICATED_VOICES]
+        if len(chosen) < MAX_DEDICATED_VOICES:
+            chosen.extend(rest[: MAX_DEDICATED_VOICES - len(chosen)])
+        return {item.id for item in chosen}
 
     def _plan_characters(
         self, session: Session, book_id: str, bible: BookBible | None

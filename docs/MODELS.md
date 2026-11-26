@@ -139,6 +139,8 @@ uv run novelvoice-studio worker start --preload
 
 兼容入口仍然可用：`pwsh.exe -File scripts/start_workers.ps1 [-Preload]`。
 
+`scripts/start.ps1`（内部调用 `scripts/server_control.py start`）会在后端健康检查通过后自动在后台拉起这两个服务，所以日常只需要启动应用；设置 `NOVELVOICE_SKIP_WORKERS=1` 可以关掉自动启动，回到手工 `worker start` 的方式。自动启动日志在 `.run/workers/autostart.log`。
+
 检查连通性：
 
 ```powershell

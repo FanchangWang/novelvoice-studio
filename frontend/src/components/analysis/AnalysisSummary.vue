@@ -197,7 +197,7 @@ async function refresh(): Promise<void> {
         :height="4"
         :show-indicator="false"
         :status="job?.status === 'failed' ? 'error' : jobActive ? 'default' : 'success'"
-        color="#c99a45"
+        color="var(--accent)"
         class="mt-2"
       />
       <p class="mt-1.5 text-[9px] text-fog-500">

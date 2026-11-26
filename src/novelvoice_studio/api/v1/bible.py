@@ -46,3 +46,15 @@ def cancel_book_bible(
     book_id: str, service: BibleServiceDep
 ) -> AnalysisJobOut:
     return service.cancel_book_bible(book_id)
+
+
+@router.post(
+    "/books/{book_id}/bible/analysis/finalize",
+    response_model=AnalysisJobOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def finalize_book_bible(
+    book_id: str, service: BibleServiceDep
+) -> AnalysisJobOut:
+    """停止当前抽取，用已完成章节先合并出一版可用设定集。"""
+    return service.finalize_partial(book_id)

@@ -11,10 +11,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -82,6 +84,8 @@ logger = logging.getLogger(__name__)
 JOB_TYPE = "book_bible"
 ACTIVE_JOB_STATUSES = ("pending", "running")
 MERGE_BATCH_SIZE = 20
+MERGE_BATCH_CHARS = 5000
+MERGE_CHAPTERS_PER_CHARACTER = 10
 TIMELINE_MAX_CHAPTERS = 120
 TIMELINE_MAX_CHARS = 9000
 MERGE_NOTE_LIMIT = 20
@@ -405,6 +409,16 @@ class _ChapterTimeline:
     time_mode: str = "unknown"
     note: str | None = None
     confidence: float = 0.0
+
+
+@dataclass
+class _ChapterWork:
+    """单章抽取的线程内产物；数据库写入统一回到主线程执行。"""
+
+    source: _ChapterSource
+    summary_meta: dict[str, Any]
+    results: list[BibleChapterResult]
+    extraction_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -955,10 +969,16 @@ class BibleService:
         chapters = sorted(by_chapter.values(), key=lambda item: int(item["sequence"]))
         for row in chapters:
             row.pop("_confidence", None)
+        mention_chapters = len(chapters)
+        if len(chapters) > MERGE_CHAPTERS_PER_CHARACTER:
+            count = MERGE_CHAPTERS_PER_CHARACTER
+            step = (len(chapters) - 1) / max(1, count - 1)
+            kept = [chapters[int(round(index * step))] for index in range(count)]
+            chapters = list({id(row): row for row in kept}.values())
         return {
             "name": cluster.canonical_name,
             "aliases": [item["name"] for item in cluster.aliases.values()],
-            "mention_chapters": len(chapters),
+            "mention_chapters": mention_chapters,
             "total_chapters": total_chapters,
             "chapters": chapters,
             "identity": next(
@@ -1781,12 +1801,42 @@ class BibleService:
             "confidence": timeline.confidence,
         }
 
+    def _resume_bible(
+        self, session: Session, book_id: str, chapters: list[Chapter]
+    ) -> tuple[BookBible, set[str]] | None:
+        """找最近一个“有部分章节已完成”的版本，用于断点续跑。"""
+        known = {chapter.id for chapter in chapters}
+        rows = list(
+            session.scalars(
+                select(BookBible)
+                .where(BookBible.book_id == book_id)
+                .order_by(BookBible.version.desc())
+            )
+        )
+        best: tuple[int, BookBible, set[str]] | None = None
+        for bible in rows:
+            content = bible.content_json or {}
+            covered = {
+                str(row.get("chapter_id"))
+                for row in (content.get("chapter_timelines") or [])
+                if isinstance(row, dict)
+            } & known
+            if not covered or len(covered) >= len(chapters):
+                continue
+            # 取覆盖章节最多的那个版本，避免“刚取消的小任务”把更完整的进度顶掉。
+            if best is None or len(covered) > best[0]:
+                best = (len(covered), bible, covered)
+        if best is None:
+            return None
+        return best[1], best[2]
+
     def _load_previous_state(
         self,
         session: Session,
         book: Book,
         chapters: list[Chapter],
         reuse_ids: list[str],
+        base_id: str | None = None,
     ) -> tuple[
         list[_CharacterObservation],
         list[_RelationshipObservation],
@@ -1795,7 +1845,11 @@ class BibleService:
     ]:
         if not reuse_ids:
             return [], [], [], None
-        base = self._active_bible(session, book.id)
+        base = (
+            session.get(BookBible, base_id)
+            if base_id
+            else self._active_bible(session, book.id)
+        )
         if base is None:
             raise ValidationError(
                 "选定章节重跑需要已有角色圣经结果",
@@ -1905,8 +1959,30 @@ class BibleService:
             target_ids = set(requested) if requested else known_ids
             targets = [chapter for chapter in chapters if chapter.id in target_ids]
             reuse_ids = [chapter.id for chapter in chapters if chapter.id not in target_ids]
+            resume_mode = False
+            base_bible_id: str | None = None
+            progress_base = 0
+            if not requested:
+                # 没有显式选章时，优先从未完成的旧版本接着跑，而不是从第 1 章重来。
+                resume = self._resume_bible(session, book.id, chapters)
+                if resume is not None:
+                    base, covered = resume
+                    missing = [chapter for chapter in chapters if chapter.id not in covered]
+                    if missing:
+                        resume_mode = True
+                        base_bible_id = base.id
+                        target_ids = {chapter.id for chapter in missing}
+                        targets = missing
+                        reuse_ids = [
+                            chapter.id for chapter in chapters if chapter.id not in target_ids
+                        ]
+                        progress_base = len(covered)
             if reuse_ids:
-                base = self._active_bible(session, book.id)
+                base = (
+                    session.get(BookBible, base_bible_id)
+                    if base_bible_id
+                    else self._active_bible(session, book.id)
+                )
                 stored = {
                     str(row.get("chapter_id"))
                     for row in ((base.content_json or {}).get("chapter_timelines") or [])
@@ -1956,6 +2032,8 @@ class BibleService:
             )
             session.add(bible)
             session.flush()
+            progress_total = len(chapters) if resume_mode else len(targets)
+            progress_base = min(progress_base, progress_total)
             job = GenerationJob(
                 id=new_id("job"),
                 book_id=book.id,
@@ -1964,10 +2042,12 @@ class BibleService:
                 stage="bible",
                 job_type=JOB_TYPE,
                 status="pending",
-                total_items=len(targets),
-                completed_items=0,
+                total_items=progress_total,
+                completed_items=progress_base,
                 failed_items=0,
-                progress=0.0,
+                progress=(
+                    progress_base / progress_total if progress_total else 0.0
+                ),
                 attempt_count=0,
                 max_attempts=1,
                 params_json={
@@ -1975,6 +2055,10 @@ class BibleService:
                     "version": version,
                     "chapter_ids": [chapter.id for chapter in targets],
                     "reused_chapter_ids": reuse_ids,
+                    "resume_mode": resume_mode,
+                    "base_bible_id": base_bible_id,
+                    "progress_base": progress_base,
+                    "progress_total": progress_total,
                 },
                 result_json={},
                 created_at=utc_now(),
@@ -2043,6 +2127,70 @@ class BibleService:
         else:
             book.bible_status = "failed"
 
+    def _prepare_chapter(
+        self,
+        *,
+        book_id: str,
+        book_title: str,
+        source: Any,
+        chapter_id: str,
+        chapter_title: str,
+        known_extra: list[tuple[str, list[str]]],
+        previous_summary: str | None,
+    ) -> _ChapterWork:
+        """在线程里完成单章的摘要与抽取，只读数据库，不写库。"""
+        with session_scope(self.session_factory) as session:
+            book = self._book(session, book_id)
+            chapter_row = session.get(Chapter, chapter_id)
+            if chapter_row is None:
+                raise NotFoundError(f"章节「{chapter_title}」在生成过程中被删除")
+            chapter_source = self._read_chapter(session, book, chapter_row, source)
+            characters = self._active_characters(session, book.id)
+            known = self._known_payload(
+                characters, known_extra, chapter_source.text
+            )
+        windows = self._windows(chapter_source)
+        summary, summary_meta = self._summarize(chapter_source, known, windows)
+        chapter_source = _ChapterSource(
+            id=chapter_source.id,
+            title=chapter_source.title,
+            sequence=chapter_source.sequence,
+            start=chapter_source.start,
+            end=chapter_source.end,
+            text=chapter_source.text,
+            paragraphs=chapter_source.paragraphs,
+            summary=summary,
+        )
+        results: list[BibleChapterResult] = []
+        extraction_calls: list[dict[str, Any]] = []
+        for window in windows:
+            result = self.registry.llm.extract_bible_characters(
+                window.text,
+                known,
+                {
+                    "book_title": book_title,
+                    "chapter_title": chapter_source.title,
+                    "chapter_sequence": chapter_source.sequence,
+                    "chapter_summary": chapter_source.summary,
+                    "previous_summary": previous_summary,
+                    "window": {"index": window.index, "total": window.total},
+                },
+            )
+            results.append(result)
+            extraction_calls.append(
+                {
+                    "chapter_id": chapter_source.id,
+                    "window": window.index,
+                    "call": result.meta,
+                }
+            )
+        return _ChapterWork(
+            source=chapter_source,
+            summary_meta=summary_meta,
+            results=results,
+            extraction_calls=extraction_calls,
+        )
+
     def _run_job(self, job_id: str) -> None:
         started = _iso_now()
         try:
@@ -2058,6 +2206,8 @@ class BibleService:
                 if bible is None:
                     raise AppError("角色圣经版本不存在", status_code=500)
                 book = self._book(session, job.book_id)
+                book_id = book.id
+                book_title = book.title
                 chapters = self._chapters(session, book.id)
                 params = dict(job.params_json or {})
                 target_ids = {
@@ -2081,7 +2231,13 @@ class BibleService:
                     previous_relationships,
                     previous_timelines,
                     base_bible_id,
-                ) = self._load_previous_state(session, book, chapters, reuse_ids)
+                ) = self._load_previous_state(
+                    session,
+                    book,
+                    chapters,
+                    reuse_ids,
+                    params.get("base_bible_id"),
+                )
                 if previous_observations or previous_relationships or previous_timelines:
                     content = dict(bible.content_json or {})
                     content["chapter_observations"] = [
@@ -2103,6 +2259,9 @@ class BibleService:
                     bible.content_json = content
                     bible.updated_at = utc_now()
             total = len(targets)
+            progress_base = int(params.get("progress_base") or 0)
+            progress_total = int(params.get("progress_total") or total)
+            failed_chapters: list[dict[str, Any]] = []
             observations_all: list[_CharacterObservation] = list(previous_observations)
             relationships_all: list[_RelationshipObservation] = list(
                 previous_relationships
@@ -2113,144 +2272,184 @@ class BibleService:
             summary_by_sequence = {
                 chapter.sequence: chapter.summary for chapter in chapters
             }
-            previous_summary: str | None = None
             known_extra: list[tuple[str, list[str]]] = []
             reused_chapters = len(
                 {item.chapter_id for item in previous_observations}
                 | {item.chapter_id for item in previous_timelines}
             )
 
-            for index, chapter in enumerate(targets):
-                with session_scope(self.session_factory) as session:
-                    job = session.get(GenerationJob, job_id)
-                    if job is None or job.status == "cancelled":
-                        return
-                    book = self._book(session, job.book_id)
-                    source = BookService(self.settings, session).read_source(book)
-                    chapter_row = session.get(Chapter, chapter.id)
-                    if chapter_row is None:
-                        raise NotFoundError(f"章节「{chapter.title}」在生成过程中被删除")
-                    chapter_source = self._read_chapter(
-                        session, book, chapter_row, source
-                    )
-                    characters = self._active_characters(session, book.id)
-                    known = self._known_payload(
-                        characters,
-                        known_extra,
-                        chapter_source.text,
-                    )
-                windows = self._windows(chapter_source)
-                summary, summary_meta = self._summarize(
-                    chapter_source, known, windows
-                )
-                chapter_source = _ChapterSource(
-                    id=chapter_source.id,
-                    title=chapter_source.title,
-                    sequence=chapter_source.sequence,
-                    start=chapter_source.start,
-                    end=chapter_source.end,
-                    text=chapter_source.text,
-                    paragraphs=chapter_source.paragraphs,
-                    summary=summary,
-                )
-                if not summary_meta.get("reused"):
-                    with session_scope(self.session_factory) as session:
-                        row = session.get(Chapter, chapter_source.id)
-                        if row is not None and not row.summary:
-                            row.summary = summary
-                            row.summary_json = summary_meta
-                            row.updated_at = utc_now()
-                    summary_calls.append(
-                        {"chapter_id": chapter_source.id, "call": summary_meta}
-                    )
-                summary_by_sequence[chapter_source.sequence] = summary
-                previous_summary = summary_by_sequence.get(
-                    chapter_source.sequence - 1
-                )
-                results: list[BibleChapterResult] = []
-                for window in windows:
+            workers = max(1, int(self.settings.jobs.bible_parallel_chapters))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                for batch_start in range(0, total, workers):
                     with session_scope(self.session_factory) as session:
                         job = session.get(GenerationJob, job_id)
                         if job is None or job.status == "cancelled":
                             return
-                    result = self.registry.llm.extract_bible_characters(
-                        window.text,
-                        known,
-                        {
-                            "book_title": book.title,
-                            "chapter_title": chapter_source.title,
-                            "chapter_sequence": chapter_source.sequence,
-                            "chapter_summary": chapter_source.summary,
-                            "previous_summary": previous_summary,
-                            "window": {"index": window.index, "total": window.total},
-                        },
-                    )
-                    results.append(result)
-                    extraction_calls.append(
-                        {
-                            "chapter_id": chapter_source.id,
-                            "window": window.index,
-                            "call": result.meta,
-                        }
-                    )
-                chapter_observations, chapter_relationships, chapter_timeline = (
-                    self._merge_chapter_result(chapter_source, results)
-                )
-                observations_all.extend(chapter_observations)
-                relationships_all.extend(chapter_relationships)
-                chapter_timelines.append(chapter_timeline)
-                for observation in chapter_observations:
-                    aliases = [
-                        alias.name for alias in observation.draft.aliases if alias.name
+                    batch = targets[batch_start : batch_start + workers]
+                    futures = [
+                        pool.submit(
+                            self._prepare_chapter,
+                            book_id=book_id,
+                            book_title=book_title,
+                            source=source,
+                            chapter_id=chapter.id,
+                            chapter_title=chapter.title,
+                            known_extra=list(known_extra),
+                            previous_summary=summary_by_sequence.get(
+                                chapter.sequence - 1
+                            ),
+                        )
+                        for chapter in batch
                     ]
-                    if aliases:
-                        known_extra.append((observation.draft.name, aliases))
-                with session_scope(self.session_factory) as session:
-                    job = session.get(GenerationJob, job_id)
-                    bible = session.get(BookBible, job.target_id or "") if job else None
-                    if job is None or job.status == "cancelled":
-                        return
-                    if bible is not None:
-                        content = dict(bible.content_json or {})
-                        rows = list(content.get("chapter_observations") or [])
+                    works: list[_ChapterWork | None] = []
+                    for chapter, future in zip(batch, futures):
+                        try:
+                            works.append(future.result())
+                        except Exception as exc:  # noqa: BLE001
+                            # 单章失败不拖垮整本书：记录后跳过，后续可断点续跑补齐。
+                            logger.warning(
+                                "章节 %s「%s」抽取失败，已跳过：%s",
+                                chapter.sequence,
+                                chapter.title,
+                                exc,
+                            )
+                            failed_chapters.append(
+                                {
+                                    "chapter_id": chapter.id,
+                                    "sequence": chapter.sequence,
+                                    "title": chapter.title,
+                                    "error_code": str(
+                                        getattr(exc, "code", "bible_chapter_failed")
+                                    ),
+                                    "error": str(getattr(exc, "message", exc))[:500],
+                                }
+                            )
+                            works.append(None)
+                    for offset, work in enumerate(works):
+                        index = batch_start + offset
+                        if work is None:
+                            completed = progress_base + index + 1
+                            with session_scope(self.session_factory) as session:
+                                job = session.get(GenerationJob, job_id)
+                                if job is None or job.status == "cancelled":
+                                    return
+                                job.failed_items = int(job.failed_items or 0) + 1
+                                job.completed_items = min(
+                                    completed, progress_total
+                                )
+                                job.progress = min(
+                                    1.0, completed / max(1, progress_total)
+                                )
+                                job.updated_at = utc_now()
+                                job.result_json = {
+                                    **dict(job.result_json or {}),
+                                    "failed_chapters": failed_chapters[-20:],
+                                }
+                            continue
+                        chapter_source = work.source
+                        if not work.summary_meta.get("reused"):
+                            with session_scope(self.session_factory) as session:
+                                row = session.get(Chapter, chapter_source.id)
+                                if row is not None and not row.summary:
+                                    row.summary = chapter_source.summary
+                                    row.summary_json = work.summary_meta
+                                    row.updated_at = utc_now()
+                            summary_calls.append(
+                                {
+                                    "chapter_id": chapter_source.id,
+                                    "call": work.summary_meta,
+                                }
+                            )
+                        summary_by_sequence[chapter_source.sequence] = (
+                            chapter_source.summary or ""
+                        )
+                        extraction_calls.extend(work.extraction_calls)
+                        (
+                            chapter_observations,
+                            chapter_relationships,
+                            chapter_timeline,
+                        ) = self._merge_chapter_result(
+                            chapter_source, work.results
+                        )
+                        observations_all.extend(chapter_observations)
+                        relationships_all.extend(chapter_relationships)
+                        chapter_timelines.append(chapter_timeline)
                         for observation in chapter_observations:
-                            rows.append(
-                                self._serialize_character_observation(observation)
+                            aliases = [
+                                alias.name
+                                for alias in observation.draft.aliases
+                                if alias.name
+                            ]
+                            if aliases:
+                                known_extra.append(
+                                    (observation.draft.name, aliases)
+                                )
+                        with session_scope(self.session_factory) as session:
+                            job = session.get(GenerationJob, job_id)
+                            bible = (
+                                session.get(BookBible, job.target_id or "")
+                                if job
+                                else None
                             )
-                        content["chapter_observations"] = rows
-                        relationship_rows = list(
-                            content.get("relationship_observations") or []
-                        )
-                        for observation in chapter_relationships:
-                            relationship_rows.append(
-                                self._serialize_relationship_observation(observation)
+                            if job is None or job.status == "cancelled":
+                                return
+                            if bible is not None:
+                                content = dict(bible.content_json or {})
+                                rows = list(content.get("chapter_observations") or [])
+                                for observation in chapter_observations:
+                                    rows.append(
+                                        self._serialize_character_observation(
+                                            observation
+                                        )
+                                    )
+                                content["chapter_observations"] = rows
+                                relationship_rows = list(
+                                    content.get("relationship_observations") or []
+                                )
+                                for observation in chapter_relationships:
+                                    relationship_rows.append(
+                                        self._serialize_relationship_observation(
+                                            observation
+                                        )
+                                    )
+                                content["relationship_observations"] = (
+                                    relationship_rows
+                                )
+                                timeline_rows = list(
+                                    content.get("chapter_timelines") or []
+                                )
+                                timeline_rows.append(
+                                    self._serialize_timeline_row(chapter_timeline)
+                                )
+                                content["chapter_timelines"] = timeline_rows
+                                content["progress"] = {
+                                    "chapter_id": chapter_source.id,
+                                    "sequence": chapter_source.sequence,
+                                    "completed": min(
+                                        progress_base + index + 1,
+                                        progress_total,
+                                    ),
+                                    "total": progress_total,
+                                    "reused_chapters": reused_chapters,
+                                }
+                                bible.content_json = content
+                                bible.updated_at = utc_now()
+                            completed = progress_base + index + 1
+                            job.completed_items = min(
+                                completed, progress_total
                             )
-                        content["relationship_observations"] = relationship_rows
-                        timeline_rows = list(content.get("chapter_timelines") or [])
-                        timeline_rows.append(
-                            self._serialize_timeline_row(chapter_timeline)
-                        )
-                        content["chapter_timelines"] = timeline_rows
-                        content["progress"] = {
-                            "chapter_id": chapter_source.id,
-                            "sequence": chapter_source.sequence,
-                            "completed": index + 1,
-                            "total": total,
-                            "reused_chapters": reused_chapters,
-                        }
-                        bible.content_json = content
-                        bible.updated_at = utc_now()
-                    job.completed_items = index + 1
-                    job.progress = min(1.0, (index + 1) / max(1, total))
-                    job.updated_at = utc_now()
-                    job.result_json = {
-                        **dict(job.result_json or {}),
-                        "last_chapter": {
-                            "id": chapter_source.id,
-                            "sequence": chapter_source.sequence,
-                            "characters": len(chapter_observations),
-                        },
-                    }
+                            job.progress = min(
+                                1.0, completed / max(1, progress_total)
+                            )
+                            job.updated_at = utc_now()
+                            job.result_json = {
+                                **dict(job.result_json or {}),
+                                "last_chapter": {
+                                    "id": chapter_source.id,
+                                    "sequence": chapter_source.sequence,
+                                    "characters": len(chapter_observations),
+                                },
+                            }
 
             self._finalize(
                 job_id,
@@ -2263,6 +2462,7 @@ class BibleService:
                 started,
                 reused_chapters=reused_chapters,
                 base_bible_id=base_bible_id,
+                failed_chapters=failed_chapters,
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("角色圣经任务 %s 异常终止", job_id)
@@ -2298,7 +2498,9 @@ class BibleService:
         *,
         reused_chapters: int = 0,
         base_bible_id: str | None = None,
+        failed_chapters: list[dict[str, Any]] | None = None,
     ) -> None:
+        failed = list(failed_chapters or [])
         chapter_timelines = list(
             {
                 item.chapter_id: item
@@ -2323,16 +2525,37 @@ class BibleService:
 
         clusters, alias_conflicts, cluster_warnings = self._build_clusters(observations)
         warnings = list(cluster_warnings)
+        covered_count = len({item.chapter_id for item in chapter_timelines})
+        if covered_count < total_chapters:
+            warnings.append(
+                f"本版本只覆盖 {covered_count}/{total_chapters} 章；"
+                "后续可继续生成，只补剩余章节。"
+            )
+        if failed:
+            sequences = "、".join(str(item.get("sequence")) for item in failed[:20])
+            warnings.append(
+                f"有 {len(failed)} 章抽取失败（第 {sequences} 章）已跳过；"
+                "再次点击生成会从断点继续，只补跑这些章节。"
+            )
         merge_calls: list[dict[str, Any]] = []
         cursor = 0
         while cursor < len(clusters):
-            batch = clusters[cursor : cursor + MERGE_BATCH_SIZE]
-            candidates = [
-                self._candidate_payload(cluster, total_chapters) for cluster in batch
-            ]
+            payloads: list[dict[str, Any]] = []
+            chars = 0
+            while cursor + len(payloads) < len(clusters) and len(
+                payloads
+            ) < MERGE_BATCH_SIZE:
+                payload = self._candidate_payload(
+                    clusters[cursor + len(payloads)], total_chapters
+                )
+                cost = len(json.dumps(payload, ensure_ascii=False, default=str))
+                if payloads and chars + cost > MERGE_BATCH_CHARS:
+                    break
+                payloads.append(payload)
+                chars += cost
             try:
                 result = self.registry.llm.merge_bible_candidates(
-                    candidates,
+                    payloads,
                     {"book_title": book_title, "total_chapters": total_chapters},
                 )
             except Exception as exc:  # noqa: BLE001
@@ -2341,7 +2564,7 @@ class BibleService:
                     "角色层级与人物弧的 AI 归并失败，已保留确定性合并结果；"
                     f"原因：{str(getattr(exc, 'message', exc))[:300]}"
                 )
-                cursor += len(batch)
+                cursor += len(payloads)
                 continue
             merge_calls.append(result.meta)
             merged_clusters, merge_warnings = self._merge_llm_results(
@@ -2350,7 +2573,7 @@ class BibleService:
             warnings.extend(merge_warnings)
             removed = len(clusters) - len(merged_clusters)
             clusters = merged_clusters
-            cursor += max(1, len(batch) - removed)
+            cursor += max(1, len(payloads) - removed)
 
         clusters.sort(key=lambda item: (min(item.chapter_sequences or [0]), item.canonical_name))
         with session_scope(self.session_factory) as session:
@@ -2669,7 +2892,7 @@ class BibleService:
                 )
                 or 0
             )
-            final_status = "needs_review" if blocking else "approved"
+            final_status = "needs_review" if (blocking or failed) else "approved"
             content = dict(bible.content_json or {})
             content.update(
                 {
@@ -2682,8 +2905,13 @@ class BibleService:
                     },
                     "stats": {
                         "chapters": total_chapters,
-                        "analyzed_chapters": max(0, total_chapters - reused_chapters),
+                        "covered_chapters": covered_count,
+                        "analyzed_chapters": max(
+                            0, total_chapters - reused_chapters - len(failed)
+                        ),
                         "reused_chapters": reused_chapters,
+                        "failed_chapters": len(failed),
+                        "partial": covered_count < total_chapters,
                         "characters": len(character_summaries),
                         "arcs": arc_total,
                         "relationships": relationship_total,
@@ -2769,7 +2997,13 @@ class BibleService:
             job = session.get(GenerationJob, job_id)
             if job is not None:
                 job.status = "completed"
-                job.progress = 1.0
+                job.progress = (
+                    covered_count / max(1, total_chapters)
+                    if (job.params_json or {}).get("finalize_only")
+                    else 1.0
+                )
+                if failed:
+                    job.failed_items = len(failed)
                 job.finished_at = utc_now()
                 job.updated_at = utc_now()
                 job.result_json = {
@@ -2784,6 +3018,7 @@ class BibleService:
                     "relationships": relationship_total,
                     "review_items": review_count,
                     "reused_chapters": reused_chapters,
+                    "failed_chapters": len(failed),
                     "warnings": len(content["warnings"]),
                 }
 
@@ -3039,6 +3274,134 @@ class BibleService:
                 else None,
                 job=to_job_out(job) if job else None,
             )
+
+    def finalize_partial(self, book_id: str) -> AnalysisJobOut:
+        """停止当前任务，并用已完成章节先合并出一版可用的设定集。"""
+        with session_scope(self.session_factory) as session:
+            book = self._book(session, book_id)
+            chapters = self._chapters(session, book.id)
+            running = self._active_job(session, book.id)
+            bible: BookBible | None = None
+            if running is not None:
+                if (running.params_json or {}).get("finalize_only"):
+                    raise ConflictError(
+                        "设定集正在收尾，请稍候", code="bible_finalizing"
+                    )
+                bible = session.get(BookBible, running.target_id or "")
+                # 只停任务，不把版本标成 failed：接下来按已完成章节收尾。
+                running.status = "cancelled"
+                running.finished_at = utc_now()
+                running.updated_at = utc_now()
+            else:
+                resume = self._resume_bible(session, book.id, chapters)
+                if resume is not None:
+                    bible = resume[0]
+            if bible is None:
+                raise ValidationError(
+                    "没有可收尾的设定集进度", code="bible_no_partial"
+                )
+            content = dict(bible.content_json or {})
+            covered = {
+                str(row.get("chapter_id"))
+                for row in (content.get("chapter_timelines") or [])
+                if isinstance(row, dict)
+            } & {chapter.id for chapter in chapters}
+            if not covered:
+                raise ValidationError(
+                    "当前设定集还没有完成任何章节", code="bible_no_partial"
+                )
+            job = GenerationJob(
+                id=new_id("job"),
+                book_id=book.id,
+                target_id=bible.id,
+                target_type="book",
+                stage="bible",
+                job_type=JOB_TYPE,
+                status="pending",
+                total_items=len(chapters),
+                completed_items=len(covered),
+                failed_items=0,
+                progress=len(covered) / max(1, len(chapters)),
+                attempt_count=0,
+                max_attempts=1,
+                params_json={
+                    "bible_id": bible.id,
+                    "finalize_only": True,
+                    "covered": len(covered),
+                },
+                result_json={},
+                created_at=utc_now(),
+                updated_at=utc_now(),
+            )
+            session.add(job)
+            session.flush()
+            book.bible_status = "running"
+            book.updated_at = utc_now()
+            output = to_job_out(job)
+        thread = threading.Thread(
+            target=self._run_finalize_job,
+            args=(output.id,),
+            name=f"novelvoice-bible-finalize-{output.id}",
+            daemon=True,
+        )
+        thread.start()
+        return output
+
+    def _run_finalize_job(self, job_id: str) -> None:
+        started = _iso_now()
+        try:
+            # 给刚被取消的抽取线程一点时间退出，避免它再写一章。
+            time.sleep(2)
+            with session_scope(self.session_factory) as session:
+                job = session.get(GenerationJob, job_id)
+                if job is None or job.status == "cancelled":
+                    return
+                job.status = "running"
+                job.started_at = utc_now()
+                job.updated_at = utc_now()
+                book = self._book(session, job.book_id)
+                chapters = self._chapters(session, book.id)
+                bible = session.get(BookBible, job.target_id or "")
+                if bible is None:
+                    raise AppError("角色圣经版本不存在", status_code=500)
+                covered = {
+                    str(row.get("chapter_id"))
+                    for row in ((bible.content_json or {}).get("chapter_timelines") or [])
+                    if isinstance(row, dict)
+                } & {chapter.id for chapter in chapters}
+                reuse_ids = [chapter.id for chapter in chapters if chapter.id in covered]
+                (
+                    observations,
+                    relationships,
+                    timelines,
+                    base_id,
+                ) = self._load_previous_state(
+                    session, book, chapters, reuse_ids, bible.id
+                )
+            self._finalize(
+                job_id,
+                observations,
+                relationships,
+                timelines,
+                chapters,
+                [],
+                [],
+                started,
+                reused_chapters=len(covered),
+                base_bible_id=base_id,
+                failed_chapters=[],
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("角色圣经收尾任务 %s 异常终止", job_id)
+            with session_scope(self.session_factory) as session:
+                job = session.get(GenerationJob, job_id)
+                if job is None or job.status == "cancelled":
+                    return
+                job.status = "failed"
+                job.error_code = str(getattr(exc, "code", "bible_finalize_failed"))
+                job.error_message = str(getattr(exc, "message", exc))[:2000]
+                job.finished_at = utc_now()
+                job.updated_at = utc_now()
 
     def cancel_book_bible(self, book_id: str) -> AnalysisJobOut:
         with session_scope(self.session_factory) as session:

@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import random
 import time
 from typing import Any, TypeVar
 
@@ -51,6 +53,12 @@ from novelvoice_studio.core.errors import AppError, DependencyUnavailableError
 
 TModel = TypeVar("TModel", bound=BaseModel)
 
+logger = logging.getLogger(__name__)
+
+# Ollama 在检测到模型长时间复读同一串 token 时会直接中止请求（HTTP 500）。
+# 小模型在 JSON 长文本里偶发这种情况，换一个随机 seed 重试通常就能走出来。
+_REPEAT_ABORT = "repeat limit"
+
 
 class ProviderResponseError(AppError):
     """LLM 返回内容无法通过结构校验。"""
@@ -90,6 +98,9 @@ class OllamaLLMProvider(LLMProvider):
         timeout_seconds: float = 120.0,
         temperature: float = 0.2,
         json_retries: int = 2,
+        num_predict: int = 6144,
+        repeat_penalty: float = 1.12,
+        repeat_last_n: int = 256,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -98,6 +109,9 @@ class OllamaLLMProvider(LLMProvider):
         self.timeout_seconds = timeout_seconds
         self.temperature = temperature
         self.json_retries = json_retries
+        self.num_predict = num_predict
+        self.repeat_penalty = repeat_penalty
+        self.repeat_last_n = repeat_last_n
 
     # ------------------------------------------------------------------ HTTP
 
@@ -159,44 +173,69 @@ class OllamaLLMProvider(LLMProvider):
 
     # ------------------------------------------------------------------ chat
 
-    def _chat(self, messages: list[dict[str, str]]) -> tuple[str, dict[str, Any]]:
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": messages,
-            "stream": False,
-            "think": False,
-            "format": "json",
-            "keep_alive": self.keep_alive,
-            "options": {
-                "temperature": self.temperature,
-                "num_ctx": self.context_length,
-            },
+    def _chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        num_predict: int | None = None,
+        seed: int | None = None,
+    ) -> tuple[str, dict[str, Any]]:
+        options: dict[str, Any] = {
+            "temperature": self.temperature,
+            "num_ctx": self.context_length,
+            "num_predict": num_predict or self.num_predict,
+            "repeat_penalty": self.repeat_penalty,
+            "repeat_last_n": self.repeat_last_n,
         }
-        started = time.perf_counter()
-        try:
-            with self._client() as client:
-                response = client.post("/api/chat", json=payload)
-        except httpx.TimeoutException as exc:
-            raise self._unavailable(
-                f"Ollama 请求超时（{self.timeout_seconds:.0f}s），可尝试拆分章节或调大 llm.timeout_seconds",
-                exc,
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise self._unavailable(
-                "无法连接本机 Ollama，请确认服务已在运行（ollama serve）", exc
-            ) from exc
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        if seed is not None:
+            options["seed"] = seed
 
-        if response.status_code == 404:
-            raise self._unavailable(
-                f"Ollama 中没有模型 {self.model}；请先执行 `ollama pull {self.model}`",
-            )
-        if response.status_code >= 400:
-            snippet = response.text[:400]
-            raise ProviderResponseError(
-                f"Ollama 请求失败：HTTP {response.status_code}（{snippet}）",
-                details={"response": snippet, "model": self.model},
-            )
+        started = time.perf_counter()
+        retried = 0
+        while True:
+            payload: dict[str, Any] = {
+                "model": self.model,
+                "messages": messages,
+                "stream": False,
+                "think": False,
+                "format": "json",
+                "keep_alive": self.keep_alive,
+                "options": options,
+            }
+            try:
+                with self._client() as client:
+                    response = client.post("/api/chat", json=payload)
+            except httpx.TimeoutException as exc:
+                raise self._unavailable(
+                    f"Ollama 请求超时（{self.timeout_seconds:.0f}s），可尝试拆分章节或调大 llm.timeout_seconds",
+                    exc,
+                ) from exc
+            except httpx.HTTPError as exc:
+                raise self._unavailable(
+                    "无法连接本机 Ollama，请确认服务已在运行（ollama serve）", exc
+                ) from exc
+
+            if response.status_code >= 400:
+                snippet = response.text[:400]
+                if retried < 2 and _REPEAT_ABORT in snippet:
+                    # 复读中止：换一个 seed 再来一次，避免整本书因为某一章直接失败。
+                    retried += 1
+                    options = {**options, "seed": random.randint(1, 2**31 - 1)}
+                    logger.warning(
+                        "Ollama 复读中止，换 seed 重试（第 %s 次）", retried
+                    )
+                    continue
+                if response.status_code == 404:
+                    raise self._unavailable(
+                        f"Ollama 中没有模型 {self.model}；请先执行 `ollama pull {self.model}`",
+                    )
+                raise ProviderResponseError(
+                    f"Ollama 请求失败：HTTP {response.status_code}（{snippet}）",
+                    details={"response": snippet, "model": self.model},
+                )
+            break
+
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
         try:
             body = response.json()
         except ValueError as exc:
@@ -214,6 +253,7 @@ class OllamaLLMProvider(LLMProvider):
             "eval_count": body.get("eval_count"),
             "done_reason": body.get("done_reason"),
             "total_duration_ns": body.get("total_duration"),
+            "repeat_retries": retried,
         }
         return content, meta
 

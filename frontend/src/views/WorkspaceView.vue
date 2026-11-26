@@ -656,7 +656,7 @@ onBeforeUnmount(() => {
               class="mt-[3px] grid h-3.5 w-3.5 shrink-0 place-items-center rounded-[3px] border"
               :class="
                 isMergeSelected(chapter.id)
-                  ? 'border-brass-400 bg-brass-500 text-ink-950'
+                  ? 'border-brass-400 bg-brass-500 nv-on-accent'
                   : 'border-ink-600'
               "
             >

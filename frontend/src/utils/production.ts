@@ -89,10 +89,73 @@ export const NARRATIVE_MODE_LABELS: Record<string, string> = {
   unknown: '未知',
 }
 
+export const ADAPTATION_LEVEL_LABELS: Record<string, string> = {
+  light: '轻度改编',
+  standard: '标准改编',
+  strong: '较大改编',
+  legacy: '旧版数据',
+}
+
+/** 剧本版本自身的状态，和章节阶段状态不是同一套枚举。 */
+export const SCRIPT_VERSION_STATUS_LABELS: Record<string, string> = {
+  draft: '草稿',
+  running: '生成中',
+  needs_review: '待审核',
+  approved: '已审核',
+  superseded: '已被新版本替换',
+  failed: '失败',
+}
+
+export const JOB_TYPE_LABELS: Record<string, string> = {
+  chapter_analysis: '章节分析',
+  book_bible: '全书设定集',
+  chapter_scenes: '本章分场',
+  chapter_script: '本章剧本',
+  book_casting: '自动选角',
+  segment_audio: '单元音频',
+  voice_design: '音色设计',
+}
+
+/** 制作链任务的运行状态；与阶段 2 的“分析中”区分。 */
+export const PRODUCTION_JOB_STATUS_LABELS: Record<string, string> = {
+  pending: '等待启动',
+  queued: '排队中',
+  running: '生成中',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
+}
+
+export const ENTITY_TYPE_LABELS: Record<string, string> = {
+  book: '书籍',
+  chapter: '章节',
+  segment: '片段',
+  character: '角色',
+  scene: '场景',
+  script_unit: '剧本单元',
+  voice_actor: '配音员',
+  voice_profile: '音色候选',
+}
+
+export const ACTOR_STATUS_LABELS: Record<string, string> = {
+  ready: '可用',
+  archived: '已归档',
+  failed: '生成失败',
+  generating: '生成中',
+}
+
 export const REVIEW_STATUS_LABELS: Record<string, string> = {
   open: '待处理',
   resolved: '已接受',
   ignored: '已忽略',
+}
+
+export function jobTypeLabel(value: string | null | undefined): string {
+  return value ? (JOB_TYPE_LABELS[value] ?? value) : '任务'
+}
+
+export function jobStatusLabel(value: string | null | undefined): string {
+  return value ? (PRODUCTION_JOB_STATUS_LABELS[value] ?? value) : '未知状态'
 }
 
 export const REVIEW_SEVERITY_LABELS: Record<string, string> = {

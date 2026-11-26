@@ -604,6 +604,13 @@ export const api = {
     )
   },
 
+  finalizeBible(bookId: string): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/books/${encodeURIComponent(bookId)}/bible/analysis/finalize`,
+      { method: 'POST' },
+    )
+  },
+
   getSceneStatus(chapterId: string): Promise<SceneStatusResponse> {
     return request<SceneStatusResponse>(
       `/chapters/${encodeURIComponent(chapterId)}/scenes/status`,

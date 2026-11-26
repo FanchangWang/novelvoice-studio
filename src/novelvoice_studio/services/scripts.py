@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import threading
@@ -452,7 +453,7 @@ class ScriptService:
         return chunks
 
     def _load_characters(
-        self, session: Session, book_id: str
+        self, session: Session, book_id: str, chapter_text: str = ""
     ) -> tuple[list[Character], list[dict[str, Any]]]:
         characters = list(
             session.scalars(
@@ -465,6 +466,7 @@ class ScriptService:
             )
         )
         payload: list[dict[str, Any]] = []
+        full: list[dict[str, Any]] = []
         for row in characters:
             aliases: list[str] = []
             for alias in row.aliases_json or []:
@@ -472,17 +474,47 @@ class ScriptService:
                 cleaned = _clean_name(name)
                 if cleaned and cleaned != row.canonical_name and cleaned not in aliases:
                     aliases.append(cleaned)
-            payload.append(
-                {
-                    "canonical_name": row.canonical_name,
-                    "aliases": aliases,
-                    "gender": row.gender,
-                    "age_range": row.age_range,
-                    "identity_description": row.identity_description,
-                    "voice_description": row.voice_description,
-                    "role_tier": row.role_tier,
-                }
-            )
+            item = {
+                "canonical_name": row.canonical_name,
+                "aliases": aliases,
+                "gender": row.gender,
+                "age_range": row.age_range,
+                "identity_description": row.identity_description,
+                "voice_description": row.voice_description,
+                "role_tier": row.role_tier,
+            }
+            hits = 0
+            for name in (row.canonical_name, *aliases):
+                if name and len(name) >= 2:
+                    hits += chapter_text.count(name)
+            full.append({**item, "_hits": hits})
+        candidates = [item for item in full if item["_hits"] > 0]
+        candidates.sort(key=lambda item: -int(item["_hits"]))
+        if len(candidates) < 8:
+            for tier in ("protagonist", "major", "supporting"):
+                for item in full:
+                    if item["role_tier"] == tier and item not in candidates:
+                        candidates.append(item)
+                    if len(candidates) >= 24:
+                        break
+                if len(candidates) >= 24:
+                    break
+        budget = 6000
+        for item in candidates[:48]:
+            cleaned = {
+                "canonical_name": item["canonical_name"],
+                "aliases": list(item["aliases"])[:6],
+                "gender": item["gender"],
+                "age_range": item["age_range"],
+                "identity_description": _clean_text(item["identity_description"], 60),
+                "voice_hint": _clean_text(item["voice_description"], 40),
+                "role_tier": item["role_tier"],
+            }
+            cost = len(json.dumps(cleaned, ensure_ascii=False, default=str))
+            if payload and budget - cost < 0:
+                break
+            budget -= cost
+            payload.append(cleaned)
         return characters, payload
 
     def _character_index(
@@ -810,7 +842,9 @@ class ScriptService:
                 chunks = self._chunks(scene_sources)
                 if not chunks:
                     raise ValidationError("章节没有可用原文，无法生成剧本", code="chapter_empty")
-                characters, known = self._load_characters(session, book.id)
+                characters, known = self._load_characters(
+                    session, book.id, "".join(chunk.text for chunk in chunks)
+                )
                 job.total_items = len(chunks)
                 job.updated_at = utc_now()
                 params = dict(job.params_json or {})

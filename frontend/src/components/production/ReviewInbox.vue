@@ -17,6 +17,7 @@ import { useReviewStore } from '@/stores/reviews'
 import { errorMessage } from '@/utils/errors'
 import { formatDateTime } from '@/utils/format'
 import {
+  ENTITY_TYPE_LABELS,
   REVIEW_SEVERITY_LABELS,
   REVIEW_SEVERITY_OPTIONS,
   REVIEW_STATUS_LABELS,
@@ -291,7 +292,6 @@ onMounted(() => {
               <p class="min-w-0 flex-1 truncate text-[12px] font-medium text-fog-200">
                 {{ item.title }}
               </p>
-              <span class="font-mono text-[9px] text-fog-600">{{ item.code }}</span>
             </div>
             <p v-if="item.message" class="mt-1.5 text-[11px] leading-5 text-fog-400">
               {{ item.message }}
@@ -306,7 +306,10 @@ onMounted(() => {
                 {{ item.book_title }}
               </button>
               <span v-else-if="item.book_title">{{ item.book_title }}</span>
-              <span>{{ item.entity_type }}<template v-if="item.entity_id"> · {{ item.entity_id }}</template></span>
+              <span :title="item.code">
+                {{ ENTITY_TYPE_LABELS[item.entity_type] ?? item.entity_type }}
+                <template v-if="item.entity_id"> · {{ item.entity_id.slice(-6).toUpperCase() }}</template>
+              </span>
               <span>{{ formatDateTime(item.created_at) }}</span>
               <span v-if="item.resolution_note" class="text-fog-400">
                 处理说明：{{ item.resolution_note }}

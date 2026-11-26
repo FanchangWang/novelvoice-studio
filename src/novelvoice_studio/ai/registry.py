@@ -32,6 +32,9 @@ class ProviderRegistry:
                 timeout_seconds=llm_config.timeout_seconds,
                 temperature=llm_config.temperature,
                 json_retries=llm_config.json_retries,
+                num_predict=llm_config.num_predict,
+                repeat_penalty=llm_config.repeat_penalty,
+                repeat_last_n=llm_config.repeat_last_n,
             )
             voice_config = settings.voice_design
             tts_config = settings.tts

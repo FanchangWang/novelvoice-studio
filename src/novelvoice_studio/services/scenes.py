@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -28,6 +29,8 @@ from novelvoice_studio.ai.base import (
     SceneDraft,
 )
 from novelvoice_studio.ai.prompts import SCENE_PROMPT_VERSION
+
+KNOWN_CHARACTER_CHARS = 6000
 from novelvoice_studio.ai.registry import ProviderRegistry
 from novelvoice_studio.config import Settings
 from novelvoice_studio.core.errors import (
@@ -534,33 +537,73 @@ class SceneService:
         return infos, sequences
 
     def _known_payload(
-        self, infos: list[_CharacterInfo], sequences: dict[str, int]
+        self,
+        infos: list[_CharacterInfo],
+        sequences: dict[str, int],
+        chapter_text: str = "",
+        story_order: int | None = None,
     ) -> list[dict[str, Any]]:
-        payload: list[dict[str, Any]] = []
+        """只把本章真正出现/可能被指代的角色送进提示词。
+
+        全书 100+ 角色时，完整注册表会撑爆 12k 上下文；按姓名命中过滤，
+        再对字段做压缩，保证单次 prompt 有足够空间留给原文。
+        """
+        scored: list[tuple[int, _CharacterInfo]] = []
         for info in infos:
-            payload.append(
-                {
-                    "canonical_name": info.name,
-                    "aliases": list(info.aliases),
-                    "gender": info.gender,
-                    "age_range": info.age_range,
-                    "identity_description": info.identity_description,
-                    "voice_description": info.voice_description,
-                    "role_tier": info.role_tier,
-                    "arcs": [
-                        {
-                            "label": arc.label,
-                            "age_stage": arc.age_stage,
-                            "chapter_start": sequences.get(arc.chapter_start_id or ""),
-                            "chapter_end": sequences.get(arc.chapter_end_id or ""),
-                            "story_time_start": arc.story_time_start,
-                            "story_time_end": arc.story_time_end,
-                            "voice_hint": arc.voice_hint,
-                        }
-                        for arc in info.arcs
-                    ],
-                }
-            )
+            hits = 0
+            for name in (info.name, *info.aliases):
+                if name and len(name) >= 2:
+                    hits += chapter_text.count(name)
+            scored.append((hits, info))
+        selected = [info for hits, info in scored if hits > 0]
+        hit_map = {id(info): hits for hits, info in scored}
+        selected.sort(key=lambda info: -hit_map.get(id(info), 0))
+        if len(selected) < 8:
+            for tier in ("protagonist", "major", "supporting"):
+                for _hits, info in scored:
+                    if info.role_tier == tier and info not in selected:
+                        selected.append(info)
+                    if len(selected) >= 24:
+                        break
+                if len(selected) >= 24:
+                    break
+        selected = selected[:48]
+        payload: list[dict[str, Any]] = []
+        budget = KNOWN_CHARACTER_CHARS
+        for info in selected:
+            arcs = list(info.arcs)
+            if story_order:
+                overlapping = [
+                    arc
+                    for arc in arcs
+                    if (arc.story_order_start is None or arc.story_order_start <= story_order)
+                    and (arc.story_order_end is None or arc.story_order_end >= story_order)
+                ]
+                arcs = overlapping or arcs[:1]
+            item = {
+                "canonical_name": info.name,
+                "aliases": list(info.aliases)[:6],
+                "gender": info.gender,
+                "age_range": info.age_range,
+                "role_tier": info.role_tier,
+                "identity_description": _clean_text(info.identity_description, 60),
+                "voice_hint": _clean_text(info.voice_description, 40),
+                "arcs": [
+                    {
+                        "label": arc.label,
+                        "age_stage": arc.age_stage,
+                        "story_time_start": arc.story_time_start,
+                        "story_time_end": arc.story_time_end,
+                        "voice_hint": _clean_text(arc.voice_hint, 40),
+                    }
+                    for arc in arcs[:2]
+                ],
+            }
+            cost = len(json.dumps(item, ensure_ascii=False))
+            if payload and budget - cost < 0:
+                break
+            budget -= cost
+            payload.append(item)
         return payload
 
     def _chapter_time(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -962,7 +1005,12 @@ class SceneService:
                     chapter,
                     chapter_time["story_order"],
                 )
-                known = self._known_payload(infos, sequences)
+                known = self._known_payload(
+                    infos,
+                    sequences,
+                    "".join(unit.text for unit in units),
+                    chapter_time["story_order"],
+                )
                 all_chapters = list(
                     session.scalars(
                         select(Chapter)
@@ -971,13 +1019,17 @@ class SceneService:
                     )
                 )
                 summary_by_sequence = {
-                    item.sequence: _clean_text(item.summary, 4000)
+                    item.sequence: _clean_text(item.summary, 800)
                     for item in all_chapters
                 }
-                previous_summary = summary_by_sequence.get(chapter_source.sequence - 1)
-                next_summary = summary_by_sequence.get(chapter_source.sequence + 1)
-                chapter_summary = chapter_source.summary or _clean_text(
-                    row.get("summary"), 4000
+                previous_summary = _clean_text(
+                    summary_by_sequence.get(chapter_source.sequence - 1), 500
+                )
+                next_summary = _clean_text(
+                    summary_by_sequence.get(chapter_source.sequence + 1), 500
+                )
+                chapter_summary = _clean_text(
+                    chapter_source.summary or row.get("summary"), 1200
                 )
                 book_title = book.title
                 bible_id = bible.id

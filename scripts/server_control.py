@@ -306,6 +306,43 @@ def cmd_status(_args: argparse.Namespace) -> int:
     return 0 if healthy else 1
 
 
+def _start_workers() -> None:
+    """后台拉起 workers/ 引擎服务；失败不影响主服务启动。"""
+    if os.environ.get("NOVELVOICE_SKIP_WORKERS") == "1":
+        return
+    log_path = RUN_DIR / "workers" / "autostart.log"
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("ab") as log_file:
+            log_file.write(
+                f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} worker autostart =====\n".encode(
+                    "utf-8"
+                )
+            )
+            log_file.flush()
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "import sys\n"
+                    "from novelvoice_studio.engine_services import main\n"
+                    "sys.exit(main(['start']))\n",
+                ],
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                close_fds=True,
+                creationflags=(
+                    subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+                    if os.name == "nt"
+                    else 0
+                ),
+            )
+    except Exception as exc:  # noqa: BLE001
+        print(f"引擎服务自动启动失败（不影响主服务）：{exc}", file=sys.stderr)
+
+
 def cmd_start(_args: argparse.Namespace) -> int:
     info = _service_info()
     if not info["frontend_built"]:
@@ -331,6 +368,7 @@ def cmd_start(_args: argparse.Namespace) -> int:
                 return 1
             if _health_ok_url(existing_url):
                 print(f"ALREADY_RUNNING pid={existing.get('pid')} url={existing_url}")
+                _start_workers()
                 return 2
             print(
                 f"检测到本项目进程 pid={existing.get('pid')}，但健康检查失败。"
@@ -397,6 +435,7 @@ def cmd_start(_args: argparse.Namespace) -> int:
             return 1
         if _health_ok(info):
             print(f"STARTED pid={process.pid} url={info['url']}")
+            _start_workers()
             return 0
         time.sleep(0.5)
 

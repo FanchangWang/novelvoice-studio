@@ -25,6 +25,8 @@ import {
   REVIEW_SEVERITY_LABELS,
   STAGE_STATUS_LABELS,
   TIME_MODE_LABELS,
+  jobStatusLabel,
+  jobTypeLabel,
   severityTagType,
   statusTagType,
 } from '@/utils/production'
@@ -277,7 +279,8 @@ onBeforeUnmount(() => {
             :class="jobActive ? 'animate-pulse bg-brass-400' : job.status === 'failed' ? 'bg-rust-500' : 'bg-moss-400'"
           />
           <span class="text-[11px] text-fog-300">
-            {{ job.job_type }} · {{ job.status }} · {{ Math.round((job.progress || 0) * 100) }}%
+            {{ jobTypeLabel(job.job_type) }} · {{ jobStatusLabel(job.status) }} ·
+            {{ Math.round((job.progress || 0) * 100) }}%
           </span>
           <span class="text-[10px] text-fog-500">{{ job.completed_items }} / {{ job.total_items }}</span>
           <span v-if="job.error_message" class="text-[10px] text-rust-400">{{ job.error_message }}</span>
@@ -372,7 +375,7 @@ onBeforeUnmount(() => {
               <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[9px] text-fog-600">
                 <span>原文 {{ scene.source_start_offset }}–{{ scene.source_end_offset }}</span>
                 <span v-if="scene.pov_character_name">视角：{{ scene.pov_character_name }}</span>
-                <span>{{ scene.analysis_status }}</span>
+                <span>{{ STAGE_STATUS_LABELS[scene.analysis_status] ?? scene.analysis_status }}</span>
               </div>
 
               <div v-if="scene.characters.length" class="mt-2.5 grid gap-1.5 xl:grid-cols-2">
@@ -426,13 +429,13 @@ onBeforeUnmount(() => {
             :key="item.id"
             type="button"
             class="flex w-full items-start gap-2 rounded-lg bg-ink-900/60 px-2.5 py-2 text-left"
+            :title="item.code"
             @click="emit('open-reviews')"
           >
             <NTag size="tiny" :bordered="false" :type="severityTagType(item.severity)">
               {{ REVIEW_SEVERITY_LABELS[item.severity] ?? item.severity }}
             </NTag>
             <span class="min-w-0 flex-1 text-[10px] leading-5 text-fog-300">{{ item.title }}</span>
-            <span class="font-mono text-[9px] text-fog-600">{{ item.code }}</span>
           </button>
         </div>
       </section>

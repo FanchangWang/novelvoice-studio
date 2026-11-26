@@ -62,19 +62,19 @@ onMounted(() => {
 <template>
   <div class="flex h-full min-h-0 bg-ink-950 text-fog-200">
     <aside
-      class="relative z-20 flex w-60 shrink-0 flex-col border-r border-ink-700/80 bg-ink-900/75 backdrop-blur"
+      class="relative z-20 flex w-64 shrink-0 flex-col border-r border-ink-700/80 bg-ink-900/75 backdrop-blur"
     >
       <div class="flex items-center gap-3 px-5 pb-5 pt-6">
         <div
-          class="grid h-10 w-10 place-items-center rounded-lg border border-brass-600/60 bg-brass-500/10 font-display text-lg text-brass-300 shadow-[0_0_30px_-14px_rgba(223,178,102,0.8)]"
+          class="nv-brand-mark grid h-10 w-10 place-items-center rounded-lg border border-brass-600/60 bg-brass-500/10 font-display text-lg text-brass-300"
         >
           声
         </div>
         <div class="min-w-0">
-          <p class="font-display text-[1.06rem] tracking-wide text-fog-100">
+          <p class="font-display text-lg tracking-wide text-fog-100">
             NovelVoice
           </p>
-          <p class="mt-0.5 text-[9px] font-semibold uppercase tracking-[0.34em] text-fog-500">
+          <p class="mt-0.5 text-xs font-semibold uppercase tracking-[0.34em] text-fog-500">
             Studio
           </p>
         </div>
@@ -105,8 +105,8 @@ onMounted(() => {
             :class="isActive(item.to) ? 'text-brass-300' : 'text-fog-500 group-hover:text-fog-300'"
           />
           <span class="flex min-w-0 flex-col">
-            <span class="text-[0.86rem] font-medium leading-5">{{ item.label }}</span>
-            <span class="text-[10px] leading-4 text-fog-500">{{ item.hint }}</span>
+            <span class="text-sm font-medium leading-5">{{ item.label }}</span>
+            <span class="text-xs leading-5 text-fog-500">{{ item.hint }}</span>
           </span>
         </RouterLink>
       </nav>
@@ -125,20 +125,20 @@ onMounted(() => {
             <span class="text-xs font-medium text-fog-200">{{ providerLabel() }}</span>
             <span
               v-if="system.mockMode"
-              class="ml-auto rounded border border-brass-600/30 bg-brass-500/10 px-1.5 py-0.5 text-[9px] tracking-wider text-brass-300"
+              class="ml-auto rounded border border-brass-600/30 bg-brass-500/10 px-1.5 py-0.5 text-xs tracking-wide text-brass-300"
             >
               MOCK
             </span>
           </div>
-          <p class="mt-1.5 text-[10px] leading-4 text-fog-500">
+          <p class="mt-1.5 text-xs leading-5 text-fog-500">
             {{ providerHint() }}
           </p>
-          <p v-if="system.error && !system.status" class="mt-1 text-[10px] leading-4 text-rust-400">
+          <p v-if="system.error && !system.status" class="mt-1 text-xs leading-5 text-rust-400">
             {{ system.error }}
           </p>
         </RouterLink>
 
-        <div class="mt-3 flex items-center justify-between px-1 text-[10px] text-fog-600">
+        <div class="mt-3 flex items-center justify-between px-1 text-xs text-fog-600">
           <span>v{{ system.version }}</span>
           <a
             class="transition-colors hover:text-fog-300"

@@ -28,6 +28,8 @@ import {
   NARRATIVE_MODE_LABELS,
   ROLE_TIER_LABELS,
   TIME_MODE_LABELS,
+  jobStatusLabel,
+  jobTypeLabel,
   statusTagType,
 } from '@/utils/production'
 
@@ -49,6 +51,29 @@ let lastJobActive = false
 const bible = computed(() => state.value?.bible ?? null)
 const job = computed(() => state.value?.job ?? null)
 const jobActive = computed(() => isJobActive(job.value?.status))
+const jobStatusText = computed(() => {
+  const current = job.value
+  if (!current) return '未知状态'
+  // 单章失败不整单失败：任务会跑完并把失败章节数记在 failed_items。
+  if (current.status === 'completed' && current.failed_items > 0) {
+    return `部分完成（${current.failed_items} 章待补）`
+  }
+  if (current.status === 'completed' && current.completed_items < current.total_items) {
+    return `部分完成（已覆盖 ${current.completed_items}/${current.total_items} 章）`
+  }
+  return jobStatusLabel(current.status)
+})
+const partialJob = computed(() => {
+  const current = job.value
+  if (!current || jobActive.value) return false
+  if (current.status === 'completed') {
+    return current.failed_items > 0 || current.completed_items < current.total_items
+  }
+  if (current.status === 'failed' || current.status === 'cancelled') {
+    return current.completed_items > 0 && current.completed_items < current.total_items
+  }
+  return false
+})
 const bibleReady = computed(
   () => state.value?.bible_status === 'approved' || state.value?.bible_status === 'needs_review',
 )
@@ -105,7 +130,9 @@ async function start(): Promise<void> {
   error.value = null
   try {
     await api.startBible(props.bookId)
-    message.success('已开始生成全书设定集')
+    message.success(
+      partialJob.value ? '已从断点继续生成设定集' : '已开始生成全书设定集',
+    )
     await load(true)
     await production.refresh()
   } catch (err) {
@@ -122,12 +149,39 @@ function confirmStart(): void {
     return
   }
   dialog.warning({
-    title: '重新生成设定集',
-    content:
-      '会基于当前章节重新提取人物、别名、人物弧与时间线，生成新的设定集版本。旧版本和已有分场不会自动删除。',
-    positiveText: '重新生成',
+    title: partialJob.value ? '继续生成设定集' : '重新生成设定集',
+    content: partialJob.value
+      ? '会从上次中断的章节继续，已完成的章节不会重跑；新版本保留旧版本的已完成结果。'
+      : '会基于当前章节重新提取人物、别名、人物弧与时间线，生成新的设定集版本。旧版本和已有分场不会自动删除。',
+    positiveText: partialJob.value ? '继续生成' : '重新生成',
     negativeText: '取消',
     onPositiveClick: () => start(),
+  })
+}
+
+async function finalizeNow(): Promise<void> {
+  actionLoading.value = true
+  error.value = null
+  try {
+    await api.finalizeBible(props.bookId)
+    message.success('正在收尾，完成后即可用这一版开始选角')
+    await load(true)
+    await production.refresh()
+  } catch (err) {
+    error.value = errorMessage(err)
+    message.error(errorMessage(err))
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+function confirmFinalize(): void {
+  dialog.warning({
+    title: '用当前进度先出一版？',
+    content: `已完成 ${job.value?.completed_items ?? 0} 章，将停止继续抽取并合并成可用设定集；剩余章节以后可以继续补。`,
+    positiveText: '收尾出可用版',
+    negativeText: '继续跑',
+    onPositiveClick: () => finalizeNow(),
   })
 }
 
@@ -190,13 +244,23 @@ onBeforeUnmount(stopPolling)
             取消任务
           </NButton>
           <NButton
+            v-if="jobActive && (job?.completed_items ?? 0) > 0"
+            size="small"
+            type="primary"
+            ghost
+            :loading="actionLoading"
+            @click="confirmFinalize"
+          >
+            先收尾出可用版
+          </NButton>
+          <NButton
             v-else
             size="small"
             type="primary"
             :loading="actionLoading"
             @click="confirmStart"
           >
-            {{ bible ? '重新生成' : '生成设定集' }}
+            {{ partialJob ? '继续生成' : bible ? '重新生成' : '生成设定集' }}
           </NButton>
         </div>
       </div>
@@ -208,7 +272,7 @@ onBeforeUnmount(stopPolling)
             :class="jobActive ? 'animate-pulse bg-brass-400' : job.status === 'failed' ? 'bg-rust-500' : 'bg-moss-400'"
           />
           <span class="text-[11px] text-brass-200">
-            {{ job.job_type }} · {{ job.status }} ·
+            {{ jobTypeLabel(job.job_type) }} · {{ jobStatusText }} ·
             {{ Math.round((job.progress || 0) * 100) }}%
           </span>
           <span class="text-[10px] text-fog-500">

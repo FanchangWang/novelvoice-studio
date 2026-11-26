@@ -1,42 +1,120 @@
 @import "tailwindcss";
 
-@theme {
+/* ---------------------------------------------------------------------------
+   语义 token：所有颜色都从这里出发，浅色/深色共用同一套层级。
+   JavaScript 中 Naive UI 的主题变量见 src/theme/palette.ts，两者需保持同步。
+--------------------------------------------------------------------------- */
+:root {
+  --app-bg: #f5f6f8;
+  --surface-1: #ffffff;
+  --surface-2: #edf0f3;
+  --surface-3: #e4e9ef;
+  --surface-hover: #e9edf2;
+
+  --text-primary: #171b22;
+  --text-secondary: #3f4b59;
+  --text-muted: #596676;
+
+  --border: #d4dae1;
+  --border-strong: #7f8c9a;
+
+  --accent: #80520e;
+  --accent-hover: #96641a;
+  --accent-pressed: #6b440b;
+  --on-accent: #ffffff;
+
+  --focus-ring: #80520e;
+  --success: #2f6b43;
+  --warning: #8a5a12;
+  --danger: #a33f2d;
+  --info: #25688f;
+
+  --grid-line: rgba(23, 27, 34, 0.05);
+  --scrollbar-thumb: #b8c2cd;
+  --scrollbar-thumb-hover: #98a5b3;
+  --selection-bg: rgba(128, 82, 14, 0.18);
+  --selection-text: #171b22;
+  --shadow-card:
+    0 1px 2px rgba(16, 24, 40, 0.05),
+    0 18px 40px -32px rgba(16, 24, 40, 0.22);
+  --glow-accent: rgba(128, 82, 14, 0.2);
+}
+
+html[data-theme="dark"] {
+  --app-bg: #171a1f;
+  --surface-1: #20252c;
+  --surface-2: #292f38;
+  --surface-3: #323a45;
+  --surface-hover: #2b323b;
+
+  --text-primary: #f2f4f7;
+  --text-secondary: #c8d0da;
+  --text-muted: #aeb9c6;
+
+  --border: #3c4652;
+  --border-strong: #6a7886;
+
+  --accent: #e7b85c;
+  --accent-hover: #f0c97a;
+  --accent-pressed: #d2a246;
+  --on-accent: #1a1305;
+
+  --focus-ring: #e7b85c;
+  --success: #86b593;
+  --warning: #e7b85c;
+  --danger: #d98d7c;
+  --info: #83a9c6;
+
+  --grid-line: rgba(255, 255, 255, 0.045);
+  --scrollbar-thumb: #4e5b69;
+  --scrollbar-thumb-hover: #637183;
+  --selection-bg: rgba(231, 184, 92, 0.28);
+  --selection-text: #f7f2e7;
+  --shadow-card:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 18px 50px -36px rgba(0, 0, 0, 0.9);
+  --glow-accent: rgba(231, 184, 92, 0.55);
+}
+
+/* 现有组件统一消费 ink/fog/brass 等色阶；这里把它们映射到语义 token，
+   浅色与深色不需要各写一套布局。 */
+@theme inline {
   --font-sans:
     "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Hiragino Sans GB",
     "Microsoft YaHei", sans-serif;
   --font-display:
-    "Iowan Old Style", "Palatino Linotype", "Songti SC", "STSong", "Noto Serif CJK SC",
-    serif;
+    "Iowan Old Style", "Palatino Linotype", "Songti SC", "STSong",
+    "Noto Serif CJK SC", serif;
   --font-mono:
     "Cascadia Mono", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
 
-  --color-ink-950: #0a0b0d;
-  --color-ink-900: #0e1013;
-  --color-ink-850: #121519;
-  --color-ink-800: #171b20;
-  --color-ink-750: #1c2127;
-  --color-ink-700: #232931;
-  --color-ink-600: #303844;
+  --color-ink-950: var(--app-bg);
+  --color-ink-900: var(--surface-1);
+  --color-ink-850: var(--surface-2);
+  --color-ink-800: var(--surface-3);
+  --color-ink-750: var(--surface-3);
+  --color-ink-700: var(--border);
+  --color-ink-600: var(--border-strong);
 
-  --color-fog-100: #e9ebef;
-  --color-fog-200: #ccd1d9;
-  --color-fog-300: #a7afbb;
-  --color-fog-400: #818a97;
-  --color-fog-500: #626b78;
-  --color-fog-600: #4b535f;
+  --color-fog-100: var(--text-primary);
+  --color-fog-200: var(--text-primary);
+  --color-fog-300: var(--text-secondary);
+  --color-fog-400: var(--text-secondary);
+  --color-fog-500: var(--text-muted);
+  --color-fog-600: var(--text-muted);
 
-  --color-brass-200: #f2ddb4;
-  --color-brass-300: #ecc98a;
-  --color-brass-400: #dfb266;
-  --color-brass-500: #c99a45;
-  --color-brass-600: #a77c2f;
-  --color-brass-700: #7c5a20;
+  --color-brass-200: var(--accent);
+  --color-brass-300: var(--accent);
+  --color-brass-400: var(--accent);
+  --color-brass-500: var(--accent);
+  --color-brass-600: var(--accent);
+  --color-brass-700: var(--accent);
 
-  --color-moss-400: #86b593;
-  --color-moss-500: #5f916e;
-  --color-rust-400: #d98d7c;
-  --color-rust-500: #b96a59;
-  --color-lake-400: #83a9c6;
+  --color-moss-400: var(--success);
+  --color-moss-500: var(--success);
+  --color-rust-400: var(--danger);
+  --color-rust-500: var(--danger);
+  --color-lake-400: var(--info);
 }
 
 @layer base {
@@ -46,29 +124,50 @@
     height: 100%;
   }
 
+  /* NConfigProvider 默认只包裹内容；补上高度链，侧栏才能固定在窗口内。 */
+  #app > .n-config-provider {
+    height: 100%;
+    min-height: 0;
+  }
+
   html {
-    background: #0a0b0d;
+    background: var(--app-bg);
+    color-scheme: light;
+  }
+
+  html[data-theme="dark"] {
+    color-scheme: dark;
   }
 
   body {
     margin: 0;
-    color: #ccd1d9;
+    color: var(--text-secondary);
     font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.6;
     -webkit-font-smoothing: antialiased;
     background:
-      radial-gradient(1000px 560px at 8% -12%, rgba(201, 154, 69, 0.1), transparent 62%),
-      radial-gradient(900px 520px at 105% -4%, rgba(93, 125, 152, 0.08), transparent 58%),
-      #0a0b0d;
+      radial-gradient(
+        1000px 560px at 8% -12%,
+        color-mix(in srgb, var(--accent) 8%, transparent),
+        transparent 62%
+      ),
+      radial-gradient(
+        900px 520px at 105% -4%,
+        color-mix(in srgb, var(--info) 7%, transparent),
+        transparent 58%
+      ),
+      var(--app-bg);
   }
 
   ::selection {
-    background: rgba(223, 178, 102, 0.28);
-    color: #f7f2e7;
+    background: var(--selection-bg);
+    color: var(--selection-text);
   }
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: #303844 transparent;
+    scrollbar-color: var(--scrollbar-thumb) transparent;
   }
 
   *::-webkit-scrollbar {
@@ -77,12 +176,12 @@
   }
 
   *::-webkit-scrollbar-thumb {
-    background: #303844;
+    background: var(--scrollbar-thumb);
     border-radius: 999px;
   }
 
   *::-webkit-scrollbar-thumb:hover {
-    background: #3c4552;
+    background: var(--scrollbar-thumb-hover);
   }
 
   *::-webkit-scrollbar-track {
@@ -91,34 +190,64 @@
 
   button,
   input,
-  textarea {
+  textarea,
+  select {
     font-family: inherit;
+  }
+
+  :where(a, button, [role="button"], [tabindex]):focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
   }
 }
 
+/* 可读性下限：页面里不再出现 8–13px 的功能文字，密集元数据也至少 14px。
+   Tailwind 的工具类位于 @layer utilities，未分层的规则会稳定覆盖它们。 */
+.text-\[8px\],
+.text-\[9px\],
+.text-\[10px\],
+.text-\[11px\],
+.text-\[12px\],
+.text-\[13px\],
+.text-\[0\.86rem\],
+.text-xs {
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+/* 中文标签不使用夸张字距；英文 eyebrow 保留适度呼吸感。 */
+.tracking-\[0\.14em\],
+.tracking-\[0\.16em\],
+.tracking-\[0\.18em\],
+.tracking-\[0\.2em\] {
+  letter-spacing: 0.08em;
+}
+
+.tracking-\[0\.34em\] {
+  letter-spacing: 0.18em;
+}
+
 @utility eyebrow {
-  font-size: 0.68rem;
+  font-size: 0.875rem;
   font-weight: 600;
-  letter-spacing: 0.24em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #818a97;
+  color: var(--text-muted);
 }
 
 @utility hairline {
   background: linear-gradient(
     90deg,
-    rgba(223, 178, 102, 0.5),
-    rgba(223, 178, 102, 0.06) 45%,
+    color-mix(in srgb, var(--accent) 55%, transparent),
+    color-mix(in srgb, var(--accent) 8%, transparent) 45%,
     transparent
   );
 }
 
 .nv-card {
-  border: 1px solid #232931;
-  background: rgba(18, 21, 25, 0.78);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.02) inset,
-    0 18px 50px -36px rgba(0, 0, 0, 0.9);
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-card);
 }
 
 .nv-card-hover {
@@ -129,40 +258,112 @@
 }
 
 .nv-card-hover:hover {
-  border-color: rgba(167, 124, 47, 0.55);
-  background: rgba(23, 27, 32, 0.92);
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
+  background: var(--surface-hover);
 }
 
 .nv-focus:focus-visible {
-  outline: 2px solid rgba(223, 178, 102, 0.75);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
+}
+
+.nv-brand-mark {
+  box-shadow: 0 0 30px -14px var(--glow-accent);
+}
+
+.nv-on-accent {
+  color: var(--on-accent);
 }
 
 .nv-prose {
   font-family: var(--font-display);
-  font-size: 1.05rem;
-  line-height: 2.05;
+  font-size: 1.0625rem;
+  line-height: 1.95;
   letter-spacing: 0.01em;
-  color: #d5d9df;
+  color: var(--text-primary);
 }
 
 .nv-prose-dialogue {
-  color: #e8e0cf;
+  color: var(--text-primary);
 }
 
 .nv-prose-heading {
-  color: #dfb266;
+  color: var(--accent);
   font-size: 1.18rem;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.02em;
 }
 
 .nv-scroll-fade {
-  mask-image: linear-gradient(to bottom, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 18px,
+    #000 calc(100% - 18px),
+    transparent 100%
+  );
 }
 
 .nv-grid {
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.022) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.022) 1px, transparent 1px);
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   background-size: 44px 44px;
+}
+
+/* Naive UI 的 .n-select / .n-input 自带 width:100%，会压过 Tailwind 的 w-* 工具类。
+   这些固定宽度用于搜索框、筛选器与章节选择，单独恢复，避免控件占满整行。 */
+.n-select.w-32,
+.n-input.w-32 {
+  width: 8rem;
+}
+
+.n-select.w-36,
+.n-input.w-36 {
+  width: 9rem;
+}
+
+.n-select.w-40,
+.n-input.w-40 {
+  width: 10rem;
+}
+
+.n-select.w-52 {
+  width: 13rem;
+}
+
+.n-select.w-60 {
+  width: 15rem;
+}
+
+.n-select.w-64,
+.n-input.w-64 {
+  width: 16rem;
+}
+
+/* Naive UI 的标签不跟随 common.fontSizeTiny，单独抬到可读下限。 */
+.n-tag {
+  font-size: 0.875rem !important;
+  line-height: 1.45 !important;
+}
+
+/* 输入框字数统计与表单校验提示默认只有 12px，抬到正文可读下限。 */
+.n-input-word-count,
+.n-form-item-feedback__line {
+  font-size: 0.875rem !important;
+  line-height: 1.6 !important;
+}
+
+/* 弹窗关闭按钮默认只有 18px 命中区，扩大到可稳定点击的 32px。 */
+.n-base-close {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  transition: background-color 150ms ease;
+}
+
+.n-base-close:hover {
+  background: var(--surface-hover);
 }

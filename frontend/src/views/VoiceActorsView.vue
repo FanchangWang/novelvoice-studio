@@ -17,6 +17,7 @@ import ActorEditModal from '@/components/actors/ActorEditModal.vue'
 import { useActorStore } from '@/stores/actors'
 import { useSystemStore } from '@/stores/system'
 import { AGE_LABELS, GENDER_LABELS, labelOf } from '@/utils/analysis'
+import { ACTOR_STATUS_LABELS } from '@/utils/production'
 import { errorMessage } from '@/utils/errors'
 import { formatDateTime } from '@/utils/format'
 
@@ -276,7 +277,7 @@ onBeforeUnmount(() => {
                     :bordered="false"
                     type="error"
                   >
-                    {{ actor.status }}
+                    {{ ACTOR_STATUS_LABELS[actor.status] ?? actor.status }}
                   </NTag>
                 </div>
                 <p class="mt-1 text-[10px] text-fog-500">{{ actorMeta(actor) }}</p>

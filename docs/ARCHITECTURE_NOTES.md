@@ -171,3 +171,13 @@ SQLite 的 `(book_id, sequence)` 唯一约束立即检查，而批量 UPDATE 不
 - 音质 gate 以阶段 3B/3C 复听记录为准；3B 通过，3C 接受 `refdeess + raw` 定稿，但“菜 / 三”擦音与句尾气声仍有残留。不能把应用功能验收等同于音质验收。
 - 仍未完成：阶段 4 的批量队列、连续播放与 M4B 导出；阶段 0 的许可证核对（含 `ttsfrd` / `wetext`）与参考文本条件验证。
 - 详细记录见 `docs/reports/STAGE3_REPORT.md`。
+
+### 9.6 v0.5.0 生产链稳定化（2026-11-27）
+
+- **全书设定集可续跑**：`start_book_bible` 在无显式选章时走 `_resume_bible`，挑覆盖最多且未跑满的历史版本作为底稿，只补缺失章节；任务进度以 `progress_base/progress_total` 为基线，重启或中断后不会回零。
+- **单章失败隔离**：逐章抽取的 future 单独捕获异常，失败写入 `failed_chapters` 并计入 `failed_items`，其余章节继续；任务最终仍置 `completed`（数据库 CHECK 约束不允许 `completed_with_errors`），前端据此显示“部分完成（N 章待补）”。
+- **提前收尾**：`POST /books/{id}/bible/analysis/finalize` 停止当前抽取，用已完成章节走 `finalize_only` 任务合并出可用版本；`stats` 增加 `covered_chapters` / `partial`，警告记录覆盖范围，版本状态为 `needs_review`，可直接进入选角。
+- **提示词按需裁剪**：分场与剧本不再把全书角色注册表整表塞进 prompt；按本章原文姓名/别名命中过滤，只补主角/重要配角到 24 个，身份 60 字、音色 40 字、只留当前剧情时间的 1–2 条人物弧，整表预算 6000 字符；章节摘要与前后章摘要也加长度上限。人物归并改为按 payload 字符数打包（上限 5000 字符）并对每角色抽样 10 个章节，避免 122 章后 prompt 超过 12k 上下文触发 HTTP 400。
+- **选角声线池**：旁白之外只为排名前 20 的角色单独设计声线，全书配音员上限 30；次要角色复用已有演员，要求性别/年龄兼容，且不得与已绑定角色同场景（无分场数据时按同章判断）出现。角色有多个年龄阶段时才建立阶段声线，基础声线复用对应阶段声线，避免同一角色多出一把嗓子。
+- **引擎服务自动启动**：`scripts/server_control.py start`（`scripts/start.ps1` 调用）在健康检查通过后后台执行 `worker start`，日志写 `.run/workers/autostart.log`；`NOVELVOICE_SKIP_WORKERS=1` 可关闭，保留手工管理路径。
+- 实施细节、实测数据与后续接手要点见 `docs/reports/STAGE4_PIPELINE_HARDENING_2026-11-27.md`。

@@ -100,6 +100,48 @@ def test_book_bible_mock_pipeline(
     assert current["bible_status"] == status["bible_status"]
 
 
+def test_book_bible_chapter_failure_is_isolated_and_resumable(
+    client: TestClient,
+    upload,
+    sample_text: str,
+    monkeypatch,
+) -> None:
+    """单章抽取失败只跳过该章，任务不整单失败；再次生成从断点续跑。"""
+    from novelvoice_studio.ai.mock import MockLLMProvider
+    from novelvoice_studio.ai.ollama import ProviderResponseError
+
+    book_id = _import_sample(upload, sample_text)
+    state = {"fail": True}
+    original = MockLLMProvider.extract_bible_characters
+
+    def flaky(self, text, known_characters, context=None):
+        if state["fail"] and int((context or {}).get("chapter_sequence") or 0) == 2:
+            raise ProviderResponseError("模拟单章抽取失败")
+        return original(self, text, known_characters, context)
+
+    monkeypatch.setattr(MockLLMProvider, "extract_bible_characters", flaky)
+
+    assert client.post(f"/api/v1/books/{book_id}/bible/analysis").status_code == 202
+    status = _wait_bible(client, book_id)
+    assert status["job"]["status"] == "completed"
+    assert status["job"]["failed_items"] == 1
+    assert status["job"]["completed_items"] == 4
+    assert status["bible_status"] == "needs_review"
+
+    state["fail"] = False
+    response = client.post(f"/api/v1/books/{book_id}/bible/analysis")
+    assert response.status_code == 202
+    job = response.json()
+    assert job["total_items"] == 4
+    assert job["completed_items"] == 3
+    assert job["params"]["resume_mode"] is True
+    assert len(job["params"]["chapter_ids"]) == 1
+
+    final = _wait_bible(client, book_id)
+    assert final["job"]["status"] == "completed"
+    assert final["job"]["completed_items"] == 4
+
+
 def test_book_bible_rerun_versions_and_lock(
     client: TestClient,
     upload,

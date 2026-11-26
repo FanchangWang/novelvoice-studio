@@ -48,6 +48,10 @@ class LLMConfig(BaseModel):
     timeout_seconds: float = 120.0
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     json_retries: int = Field(default=2, ge=0, le=5)
+    # 单次调用输出上限：防止小模型在 JSON 里复读，直到 Ollama 的 repeat limit 把请求掐断。
+    num_predict: int = Field(default=6144, ge=128, le=32768)
+    repeat_penalty: float = Field(default=1.12, ge=1.0, le=2.0)
+    repeat_last_n: int = Field(default=256, ge=0, le=4096)
 
     @field_validator("base_url")
     @classmethod
@@ -141,6 +145,8 @@ class JobsConfig(BaseModel):
     max_gpu_concurrency: int = 1
     max_retries: int = 2
     auto_resume: bool = True
+    # 角色圣经逐章抽取的并发章节数；需同时把 Ollama 的 OLLAMA_NUM_PARALLEL 调到相同值。
+    bible_parallel_chapters: int = Field(default=2, ge=1, le=8)
 
 
 class ExportConfig(BaseModel):

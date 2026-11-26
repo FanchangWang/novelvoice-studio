@@ -20,7 +20,12 @@ import AssignCastModal from '@/components/production/AssignCastModal.vue'
 import { useProductionStore } from '@/stores/production'
 import { AGE_LABELS, GENDER_LABELS, isJobActive, labelOf, percent } from '@/utils/analysis'
 import { errorMessage } from '@/utils/errors'
-import { ROLE_TIER_LABELS, statusTagType } from '@/utils/production'
+import {
+  ROLE_TIER_LABELS,
+  jobStatusLabel,
+  jobTypeLabel,
+  statusTagType,
+} from '@/utils/production'
 
 const props = defineProps<{
   bookId: string
@@ -254,7 +259,8 @@ onBeforeUnmount(stopPolling)
             :class="jobActive ? 'animate-pulse bg-brass-400' : job.status === 'failed' ? 'bg-rust-500' : 'bg-moss-400'"
           />
           <span class="text-[11px] text-fog-300">
-            {{ job.job_type }} · {{ job.status }} · {{ Math.round((job.progress || 0) * 100) }}%
+            {{ jobTypeLabel(job.job_type) }} · {{ jobStatusLabel(job.status) }} ·
+            {{ Math.round((job.progress || 0) * 100) }}%
           </span>
           <span class="text-[10px] text-fog-500">{{ job.completed_items }} / {{ job.total_items }}</span>
           <span v-if="job.error_message" class="text-[10px] text-rust-400">{{ job.error_message }}</span>

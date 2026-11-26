@@ -42,6 +42,7 @@
 - [阶段 3C 去齿报告](reports/STAGE3C_SIBILANCE_REPORT.md)：句中毛刺与齿音处理定稿。
 - [阶段 3C 复听结果](reports/STAGE3C_LISTENING_RESULT.md)：最终偏好与遗留问题。
 - [引擎服务正式化与仓库清理记录](reports/ENGINE_SERVICE_AND_REPO_CLEANUP_2026-11-26.md)：统一启停、实验归档、Mizuoto 结论与回归验证。
+- [P7 后续：生产链稳定化报告](reports/STAGE4_PIPELINE_HARDENING_2026-11-27.md)：557 章真实书籍上的设定集断点续跑/提前收尾、单章失败隔离、prompt 裁剪、选角声线池与引擎服务自动启动。
 
 ## 阅读边界
 
@@ -51,7 +52,9 @@
 P2 全书角色圣经、P3 逐章分场/角色状态、P4 有声剧本、P5 全局配音员/自动选角、
 P6 制作台/全局声音库/异常收件箱，以及 P7 选中单元音频生成/试听；P7 不新增迁移）。
 P2/P3 已做 Mock 与真实本机 Ollama 验收；P4/P5/P7 目前只有 Mock/受控 Provider 自动化验证，
-真实模型剧本质量、真实声线设计与音质仍需最终验收；原阶段 4 暂停。设计与迁移口径见
+真实模型剧本质量、真实声线设计与音质仍需最终验收；原阶段 4 暂停。2026-11-27 起在 557 章真实书籍上
+补做了 P2/P3/P4/P5 长链路验证（设定集续跑与提前收尾、分场/剧本 prompt 裁剪、选角声线池），
+过程与实测数据见 [生产链稳定化报告](reports/STAGE4_PIPELINE_HARDENING_2026-11-27.md)。设计与迁移口径见
 [v0.5.0 AI 生产链重构](design/V0_5_0_AI_PRODUCTION_CHAIN_2026-11-26.md)，
 P2 结果见 [P2 实施报告](reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md)，
 P3 结果与限制见 [P3 实施报告](reports/P3_SCENES_REPORT_2026-11-26.md)，

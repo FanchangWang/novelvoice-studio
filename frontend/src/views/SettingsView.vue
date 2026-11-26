@@ -1,13 +1,22 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue'
-import { NAlert, NButton, NSpin, useMessage } from 'naive-ui'
+import {
+  NAlert,
+  NButton,
+  NRadioButton,
+  NRadioGroup,
+  NSpin,
+  useMessage,
+} from 'naive-ui'
 
 import type { ComponentStatus, PublicSettings } from '@/api/types'
 import StatusDot from '@/components/StatusDot.vue'
 import { useSystemStore } from '@/stores/system'
+import { isThemeMode, useThemeStore } from '@/stores/theme'
 import { formatDateTime, formatSettingValue } from '@/utils/format'
 
 const system = useSystemStore()
+const theme = useThemeStore()
 const message = useMessage()
 
 type SectionKey = keyof Omit<PublicSettings, 'read_only'>
@@ -159,6 +168,16 @@ const mockBannerTitle = computed(() =>
   system.mockMode ? '模拟模式运行中' : '真实 Provider 模式',
 )
 
+const resolvedThemeLabel = computed(() =>
+  theme.resolvedTheme === 'dark' ? '深色' : '浅色',
+)
+
+function updateThemeMode(value: string): void {
+  if (isThemeMode(value)) {
+    theme.setMode(value)
+  }
+}
+
 function componentTone(component: ComponentStatus): 'ok' | 'warn' | 'error' | 'idle' {
   if (component.ok) {
     return 'ok'
@@ -203,7 +222,7 @@ onMounted(() => {
           <p class="eyebrow">SETTINGS / 设置</p>
           <h1 class="mt-3 font-display text-3xl text-fog-100">系统状态与配置</h1>
           <p class="mt-2 max-w-2xl text-sm leading-6 text-fog-400">
-            只读设置视图：检查本机依赖、数据库与两个语音引擎服务的连通性，并展示实际生效的配置。
+            系统配置为只读视图；外观主题可在此调整。检查本机依赖、数据库与两个语音引擎服务的连通性，并展示实际生效的配置。
           </p>
         </div>
         <div class="flex items-center gap-2">
@@ -255,6 +274,28 @@ onMounted(() => {
           </span>
         </div>
       </NAlert>
+
+      <section class="nv-card mt-5 rounded-xl p-5">
+        <div class="flex flex-wrap items-start justify-between gap-5">
+          <div class="min-w-0">
+            <p class="eyebrow">APPEARANCE / 外观</p>
+            <h2 class="mt-1.5 font-display text-xl text-fog-100">主题模式</h2>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-fog-400">
+              默认跟随系统；手动选择会保存在本机浏览器。当前实际主题：
+              <span class="font-medium text-fog-100">{{ resolvedThemeLabel }}</span>
+            </p>
+          </div>
+          <NRadioGroup
+            name="theme-mode"
+            :value="theme.mode"
+            @update:value="updateThemeMode"
+          >
+            <NRadioButton value="system">跟随系统</NRadioButton>
+            <NRadioButton value="light">浅色</NRadioButton>
+            <NRadioButton value="dark">深色</NRadioButton>
+          </NRadioGroup>
+        </div>
+      </section>
 
       <div class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div class="nv-card rounded-xl p-4">
@@ -356,8 +397,11 @@ onMounted(() => {
                 <p class="mt-1.5 text-[10px] leading-5 text-fog-400">{{ component.detail }}</p>
 
                 <details v-if="Object.keys(component.meta).length" class="group mt-2">
-                  <summary class="cursor-pointer list-none text-[9px] text-fog-500 transition-colors hover:text-fog-300">
-                    元数据
+                  <summary
+                    class="inline-flex cursor-pointer list-none items-center gap-1 text-sm text-fog-500 transition-colors hover:text-fog-300"
+                  >
+                    <span class="text-[10px] transition-transform group-open:rotate-90">▶</span>
+                    查看元数据
                   </summary>
                   <pre class="mt-2 max-h-36 overflow-auto rounded-md bg-ink-950/70 p-2 font-mono text-[9px] leading-4 text-fog-500">{{ JSON.stringify(component.meta, null, 2) }}</pre>
                 </details>

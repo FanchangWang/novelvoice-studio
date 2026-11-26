@@ -321,7 +321,7 @@ watch(
               </div>
               <div class="min-w-0 flex-1">
                 <div class="flex flex-wrap items-center gap-1.5">
-                  <h3 class="font-display text-[15px] text-fog-100">
+                  <h3 class="font-display text-base text-fog-100">
                     {{ character.canonical_name }}
                   </h3>
                   <NTag size="small" :bordered="false">

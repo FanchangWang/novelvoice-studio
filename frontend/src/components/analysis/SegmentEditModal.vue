@@ -29,6 +29,7 @@ import {
   SEGMENT_TYPE_LABELS,
   SPEAKER_TYPE_LABELS,
 } from '@/utils/analysis'
+import { AUDIO_STATUS_LABELS } from '@/utils/production'
 import { errorMessage } from '@/utils/errors'
 
 const props = defineProps<{
@@ -269,7 +270,7 @@ watch(
         </span>
         <span>文本版本 v{{ segment.text_version }}</span>
         <span v-if="segment.audio_status !== 'none'" class="text-rust-400">
-          音频状态：{{ segment.audio_status }}
+          音频状态：{{ AUDIO_STATUS_LABELS[segment.audio_status] ?? segment.audio_status }}
         </span>
       </div>
 
