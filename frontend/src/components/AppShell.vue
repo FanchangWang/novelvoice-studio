@@ -10,8 +10,9 @@ const system = useSystemStore()
 const route = useRoute()
 
 const navItems = [
-  { to: '/library', label: '书库', hint: '导入与章节', icon: 'library' as const },
-  { to: '/voices', label: '声音库', hint: '角色与音色', icon: 'voices' as const },
+  { to: '/library', label: '书库', hint: '导入与制作台', icon: 'library' as const },
+  { to: '/voices', label: '声音库', hint: '音色演员', icon: 'voices' as const },
+  { to: '/inbox', label: '异常收件箱', hint: '集中处理异常', icon: 'inbox' as const },
   { to: '/jobs', label: '任务队列', hint: '生成与重试', icon: 'jobs' as const },
   { to: '/settings', label: '设置', hint: '状态与配置', icon: 'settings' as const },
 ]

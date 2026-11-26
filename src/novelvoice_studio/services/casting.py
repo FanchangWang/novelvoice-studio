@@ -427,6 +427,14 @@ class CastingService:
                 job=to_job_out(job) if job else None,
             )
 
+    def refresh_status(self, book_id: str) -> str:
+        """在异常收件箱处理完选角项后重算本书制作状态。"""
+
+        with session_scope(self.session_factory) as session:
+            book = self._book(session, book_id)
+            self._refresh_production_status(session, book)
+            return book.production_status
+
     def start_casting(self, book_id: str) -> AnalysisJobOut:
         with session_scope(self.session_factory) as session:
             book = self._book(session, book_id)

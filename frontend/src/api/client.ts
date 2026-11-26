@@ -36,6 +36,27 @@ import type {
   VoicePreviewPayload,
   VoiceProfileOut,
   VoiceUpdatePayload,
+  BookCastsResponse,
+  BibleStateResponse,
+  BibleStatusResponse,
+  CastAssignPayload,
+  CastingStatusResponse,
+  ProductionOverviewOut,
+  ReviewBatchResolvePayload,
+  ReviewBatchResolveResponse,
+  ReviewListResponse,
+  ReviewResolvePayload,
+  ReviewItemOut,
+  SceneStateResponse,
+  SceneStatusResponse,
+  ScriptStateResponse,
+  ScriptStatusResponse,
+  ScriptVersionListResponse,
+  ScriptVersionOut,
+  VoiceActorCreatePayload,
+  VoiceActorListResponse,
+  VoiceActorOut,
+  VoiceActorUpdatePayload,
 } from './types'
 
 const API_BASE = '/api/v1'
@@ -471,5 +492,219 @@ export const api = {
       method: 'POST',
       body: form,
     })
+  },
+
+  /* ------------------------------ v0.5.0 API ------------------------------ */
+
+  getProductionOverview(bookId: string): Promise<ProductionOverviewOut> {
+    return request<ProductionOverviewOut>(
+      `/books/${encodeURIComponent(bookId)}/production`,
+    )
+  },
+
+  listReviews(params: {
+    bookId?: string | null
+    status?: string | null
+    severity?: string | null
+    code?: string | null
+    entityType?: string | null
+    limit?: number
+    offset?: number
+  } = {}): Promise<ReviewListResponse> {
+    const query = new URLSearchParams()
+    if (params.bookId) query.set('book_id', params.bookId)
+    if (params.status !== undefined && params.status !== null) {
+      query.set('status', params.status)
+    }
+    if (params.severity) query.set('severity', params.severity)
+    if (params.code) query.set('code', params.code)
+    if (params.entityType) query.set('entity_type', params.entityType)
+    if (params.limit !== undefined) query.set('limit', String(params.limit))
+    if (params.offset !== undefined) query.set('offset', String(params.offset))
+    const suffix = query.toString()
+    return request<ReviewListResponse>(`/reviews${suffix ? `?${suffix}` : ''}`)
+  },
+
+  resolveReview(
+    reviewId: string,
+    payload: ReviewResolvePayload,
+  ): Promise<ReviewItemOut> {
+    return request<ReviewItemOut>(
+      `/reviews/${encodeURIComponent(reviewId)}/resolve`,
+      jsonBody('POST', payload),
+    )
+  },
+
+  batchResolveReviews(
+    payload: ReviewBatchResolvePayload,
+  ): Promise<ReviewBatchResolveResponse> {
+    return request<ReviewBatchResolveResponse>(
+      '/reviews/batch-resolve',
+      jsonBody('POST', payload),
+    )
+  },
+
+  getBibleStatus(bookId: string): Promise<BibleStatusResponse> {
+    return request<BibleStatusResponse>(
+      `/books/${encodeURIComponent(bookId)}/bible/status`,
+    )
+  },
+
+  getBible(bookId: string): Promise<BibleStateResponse> {
+    return request<BibleStateResponse>(
+      `/books/${encodeURIComponent(bookId)}/bible`,
+    )
+  },
+
+  startBible(bookId: string, chapterIds: string[] = []): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/books/${encodeURIComponent(bookId)}/bible/analysis`,
+      jsonBody('POST', { chapter_ids: chapterIds }),
+    )
+  },
+
+  cancelBible(bookId: string): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/books/${encodeURIComponent(bookId)}/bible/analysis/cancel`,
+      { method: 'POST' },
+    )
+  },
+
+  getSceneStatus(chapterId: string): Promise<SceneStatusResponse> {
+    return request<SceneStatusResponse>(
+      `/chapters/${encodeURIComponent(chapterId)}/scenes/status`,
+    )
+  },
+
+  getScenes(chapterId: string): Promise<SceneStateResponse> {
+    return request<SceneStateResponse>(
+      `/chapters/${encodeURIComponent(chapterId)}/scenes`,
+    )
+  },
+
+  startScenes(chapterId: string): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/chapters/${encodeURIComponent(chapterId)}/scenes`,
+      { method: 'POST' },
+    )
+  },
+
+  cancelScenes(chapterId: string): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/chapters/${encodeURIComponent(chapterId)}/scenes/cancel`,
+      { method: 'POST' },
+    )
+  },
+
+  getScriptStatus(chapterId: string): Promise<ScriptStatusResponse> {
+    return request<ScriptStatusResponse>(
+      `/chapters/${encodeURIComponent(chapterId)}/script/status`,
+    )
+  },
+
+  getScript(chapterId: string): Promise<ScriptStateResponse> {
+    return request<ScriptStateResponse>(
+      `/chapters/${encodeURIComponent(chapterId)}/script`,
+    )
+  },
+
+  listScriptVersions(chapterId: string): Promise<ScriptVersionListResponse> {
+    return request<ScriptVersionListResponse>(
+      `/chapters/${encodeURIComponent(chapterId)}/script/versions`,
+    )
+  },
+
+  startScript(chapterId: string): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/chapters/${encodeURIComponent(chapterId)}/script`,
+      jsonBody('POST', { adaptation_level: 'light' }),
+    )
+  },
+
+  cancelScript(chapterId: string): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/chapters/${encodeURIComponent(chapterId)}/script/cancel`,
+      { method: 'POST' },
+    )
+  },
+
+  approveScriptVersion(versionId: string): Promise<ScriptVersionOut> {
+    return request<ScriptVersionOut>(
+      `/script-versions/${encodeURIComponent(versionId)}/approve`,
+      { method: 'POST' },
+    )
+  },
+
+  rollbackScriptVersion(versionId: string): Promise<ScriptVersionOut> {
+    return request<ScriptVersionOut>(
+      `/script-versions/${encodeURIComponent(versionId)}/rollback`,
+      { method: 'POST' },
+    )
+  },
+
+  listVoiceActors(params: {
+    q?: string
+    favorite?: boolean
+    status?: string
+    limit?: number
+    offset?: number
+  } = {}): Promise<VoiceActorListResponse> {
+    const query = new URLSearchParams()
+    if (params.q) query.set('q', params.q)
+    if (params.favorite !== undefined) query.set('favorite', String(params.favorite))
+    if (params.status) query.set('status', params.status)
+    if (params.limit !== undefined) query.set('limit', String(params.limit))
+    if (params.offset !== undefined) query.set('offset', String(params.offset))
+    const suffix = query.toString()
+    return request<VoiceActorListResponse>(
+      `/voice-actors${suffix ? `?${suffix}` : ''}`,
+    )
+  },
+
+  createVoiceActor(payload: VoiceActorCreatePayload): Promise<VoiceActorOut> {
+    return request<VoiceActorOut>('/voice-actors', jsonBody('POST', payload))
+  },
+
+  updateVoiceActor(
+    actorId: string,
+    payload: VoiceActorUpdatePayload,
+  ): Promise<VoiceActorOut> {
+    return request<VoiceActorOut>(
+      `/voice-actors/${encodeURIComponent(actorId)}`,
+      jsonBody('PATCH', payload),
+    )
+  },
+
+  getBookCasts(bookId: string): Promise<BookCastsResponse> {
+    return request<BookCastsResponse>(
+      `/books/${encodeURIComponent(bookId)}/casts`,
+    )
+  },
+
+  getCastingStatus(bookId: string): Promise<CastingStatusResponse> {
+    return request<CastingStatusResponse>(
+      `/books/${encodeURIComponent(bookId)}/casts/status`,
+    )
+  },
+
+  startCasting(bookId: string): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/books/${encodeURIComponent(bookId)}/casts/auto`,
+      { method: 'POST' },
+    )
+  },
+
+  cancelCasting(bookId: string): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/books/${encodeURIComponent(bookId)}/casts/cancel`,
+      { method: 'POST' },
+    )
+  },
+
+  assignCast(bookId: string, payload: CastAssignPayload): Promise<BookCastsResponse> {
+    return request<BookCastsResponse>(
+      `/books/${encodeURIComponent(bookId)}/casts/assign`,
+      jsonBody('POST', payload),
+    )
   },
 }

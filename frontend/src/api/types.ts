@@ -1,5 +1,7 @@
 /** 与后端 Pydantic 响应保持一致的类型定义。 */
 
+export * from './v05-types'
+
 export type DuplicatePolicy = 'new' | 'reject' | 'replace'
 
 export interface BookSummary {

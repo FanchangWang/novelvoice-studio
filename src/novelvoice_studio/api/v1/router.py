@@ -10,6 +10,7 @@ from novelvoice_studio.api.v1 import (
     casting,
     chapters,
     characters,
+    production,
     scenes,
     scripts,
     segments,
@@ -26,6 +27,7 @@ api_router.include_router(bible.router)
 api_router.include_router(scenes.router)
 api_router.include_router(scripts.router)
 api_router.include_router(casting.router)
+api_router.include_router(production.router)
 api_router.include_router(characters.router)
 api_router.include_router(segments.router)
 api_router.include_router(voices.router)

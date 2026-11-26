@@ -285,7 +285,7 @@ async function restore(assetId: string): Promise<void> {
 }
 
 function gotoVoices(): void {
-  void router.push({ path: '/voices', query: { bookId: props.bookId } })
+  void router.push({ name: 'book-voices', params: { bookId: props.bookId } })
 }
 
 watch(

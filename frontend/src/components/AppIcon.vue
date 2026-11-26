@@ -1,7 +1,7 @@
 <script setup lang="ts">
 withDefaults(
   defineProps<{
-    name: 'library' | 'voices' | 'jobs' | 'settings'
+    name: 'library' | 'voices' | 'inbox' | 'jobs' | 'settings'
     size?: number
   }>(),
   { size: 20 },
@@ -27,6 +27,10 @@ withDefaults(
     </template>
     <template v-else-if="name === 'voices'">
       <path d="M3 12h2.2l1.7-5.4L9.6 18l2.1-9.8L13.9 14H21" />
+    </template>
+    <template v-else-if="name === 'inbox'">
+      <path d="M4 5.5h16v9.5l-3.2 4.5H7.2L4 15V5.5Z" />
+      <path d="M4 13h4.4l1.2 2h5l1.2-2H20" />
     </template>
     <template v-else-if="name === 'jobs'">
       <path d="M5 6.5h14" />

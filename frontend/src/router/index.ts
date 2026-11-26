@@ -19,9 +19,26 @@ const router = createRouter({
       props: true,
     },
     {
+      path: '/books/:bookId/production',
+      name: 'production',
+      component: () => import('@/views/ProductionView.vue'),
+      props: true,
+    },
+    {
+      path: '/books/:bookId/voices',
+      name: 'book-voices',
+      component: () => import('@/views/VoicesView.vue'),
+      props: true,
+    },
+    {
       path: '/voices',
       name: 'voices',
-      component: () => import('@/views/VoicesView.vue'),
+      component: () => import('@/views/VoiceActorsView.vue'),
+    },
+    {
+      path: '/inbox',
+      name: 'inbox',
+      component: () => import('@/views/InboxView.vue'),
     },
     {
       path: '/jobs',

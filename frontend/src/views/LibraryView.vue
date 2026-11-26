@@ -13,7 +13,6 @@ import {
 
 import type { BookSummary } from '@/api/types'
 import ImportBookModal from '@/components/ImportBookModal.vue'
-import NewBookModal from '@/components/NewBookModal.vue'
 import { useLibraryStore } from '@/stores/library'
 import { useSystemStore } from '@/stores/system'
 import { errorMessage } from '@/utils/errors'
@@ -26,7 +25,6 @@ const dialog = useDialog()
 const message = useMessage()
 
 const showImport = ref(false)
-const showNewBook = ref(false)
 const search = ref('')
 
 const activeBookCount = computed(
@@ -58,7 +56,7 @@ const emptyHint = computed(() => {
   if (search.value.trim()) {
     return '换一个关键词，或清空搜索。'
   }
-  return '导入一本 TXT 小说开始工作，或先建立一个空项目。'
+  return '导入一本 TXT 小说开始制作。'
 })
 
 function statusLabel(status: string): string {
@@ -91,7 +89,7 @@ function openBook(book: BookSummary): void {
   if (book.status === 'deleted') {
     return
   }
-  void router.push({ name: 'workspace', params: { bookId: book.id } })
+  void router.push({ name: 'production', params: { bookId: book.id } })
 }
 
 function handleCardKey(event: KeyboardEvent, book: BookSummary): void {
@@ -133,12 +131,7 @@ async function handleIncludeDeleted(value: boolean): Promise<void> {
 
 function handleImported(bookId: string): void {
   void library.fetchBooks()
-  void router.push({ name: 'workspace', params: { bookId } })
-}
-
-function handleCreated(bookId: string): void {
-  void library.fetchBooks()
-  void router.push({ name: 'workspace', params: { bookId } })
+  void router.push({ name: 'production', params: { bookId } })
 }
 
 onMounted(() => {
@@ -157,7 +150,7 @@ onMounted(() => {
             你的有声书工作台
           </h1>
           <p class="mt-2 max-w-xl text-sm leading-6 text-fog-400">
-            导入小说 TXT，先确认编码与章节结构。原文与项目数据只保存在本机。
+            导入小说 TXT 后进入制作台：分析角色、生成分场与剧本、选角，再生成音频。原文与项目数据只保存在本机。
           </p>
         </div>
 
@@ -168,7 +161,6 @@ onMounted(() => {
           >
             模拟模式 · 不调用模型
           </span>
-          <NButton secondary @click="showNewBook = true">新建空项目</NButton>
           <NButton type="primary" @click="showImport = true">导入 TXT</NButton>
         </div>
       </div>
@@ -248,7 +240,6 @@ onMounted(() => {
         <h2 class="mt-4 font-display text-xl text-fog-200">{{ emptyTitle }}</h2>
         <p class="mt-2 max-w-sm text-xs leading-6 text-fog-500">{{ emptyHint }}</p>
         <div v-if="!search.trim() && !library.includeDeleted" class="mt-5 flex gap-2">
-          <NButton secondary @click="showNewBook = true">新建空项目</NButton>
           <NButton type="primary" @click="showImport = true">导入 TXT</NButton>
         </div>
       </div>
@@ -314,7 +305,7 @@ onMounted(() => {
               class="text-[10px]"
               :class="book.status === 'deleted' ? 'text-fog-500' : 'text-brass-400/90'"
             >
-              {{ book.status === 'deleted' ? '已移入回收站' : '打开工作区' }}
+              {{ book.status === 'deleted' ? '已移入回收站' : '进入制作台' }}
               <span v-if="book.status !== 'deleted'" aria-hidden="true">→</span>
             </span>
             <NButton
@@ -340,6 +331,5 @@ onMounted(() => {
     </div>
 
     <ImportBookModal v-model:show="showImport" @imported="handleImported" />
-    <NewBookModal v-model:show="showNewBook" @created="handleCreated" />
   </div>
 </template>

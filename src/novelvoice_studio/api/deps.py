@@ -19,6 +19,7 @@ from novelvoice_studio.services.chapter_ops import ChapterService
 from novelvoice_studio.services.character_ops import CharacterService
 from novelvoice_studio.services.importer import ImportService
 from novelvoice_studio.services.audio import AudioService
+from novelvoice_studio.services.production import ProductionService
 from novelvoice_studio.services.scenes import SceneService
 from novelvoice_studio.services.scripts import ScriptService
 from novelvoice_studio.services.segment_ops import SegmentService
@@ -154,3 +155,10 @@ AudioServiceDep = Annotated[AudioService, Depends(get_audio_service)]
 SceneServiceDep = Annotated[SceneService, Depends(get_scene_service)]
 ScriptServiceDep = Annotated[ScriptService, Depends(get_script_service)]
 CastingServiceDep = Annotated[CastingService, Depends(get_casting_service)]
+
+
+def get_production_service(session: Session = Depends(get_session)) -> ProductionService:
+    return ProductionService(session)
+
+
+ProductionServiceDep = Annotated[ProductionService, Depends(get_production_service)]
