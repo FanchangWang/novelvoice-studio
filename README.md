@@ -1,6 +1,6 @@
 # NovelVoice Studio
 
-本地优先的 AI 多角色有声小说制作系统。当前发布版本 **0.4.0**，已完成 **阶段 1：骨架与 TXT 最小闭环**、**阶段 2：AI 小说分析与审核**、**阶段 3：固定音色与单段语音生成** 的应用链路；v0.5.0 AI 生产链重构正在实施，P1–P4 后端已完成，选角、制作台 UI 与单元音频待后续阶段。批量生成、连续播放与 M4B 导出仍未实现。
+本地优先的 AI 多角色有声小说制作系统。当前发布版本 **0.4.0**，已完成 **阶段 1：骨架与 TXT 最小闭环**、**阶段 2：AI 小说分析与审核**、**阶段 3：固定音色与单段语音生成** 的应用链路；v0.5.0 AI 生产链重构正在实施，P1–P5 后端已完成，制作台 UI 与单元音频生成待 P6/P7。批量生成、连续播放与 M4B 导出仍未实现。
 
 ## 当前可用范围
 
@@ -11,6 +11,7 @@
 - 全书角色圣经（v0.5.0 P2）：章节摘要汇总、标准角色/别名、关系、人物弧、非线性剧情时间线与异常收件箱；支持选定章节重跑。
 - 逐章分场与角色状态（v0.5.0 P3）：按角色圣经和剧情时间切分场景，记录地点、时间、视角、气氛、原文范围与出场角色状态；窗口覆盖校验、确定性回退、版本与取消恢复。
 - 有声剧本（v0.5.0 P4）：基于场景与角色状态生成轻改编剧本单元，区分旁白、对白、内心、音效、环境与停顿；原文精确对齐、未覆盖部分确定性补齐、版本回退与开放疑点。当前为后端 API，剧本 UI 在 P6 接入。
+- 全局配音员库与自动选角（v0.5.0 P5）：跨书复用/收藏/试听配音员；按角色性别、年龄、标签与使用情况自动选角，缺声线时调用本机 VoiceDesign；支持旁白、角色基础声线与角色阶段声线，结果同步到剧本单元；失败与低置信匹配进入异常收件箱。当前为后端 API，制作台 UI 在 P6 接入。
 - 审核工作区：片段筛选与批量修改、角色资料编辑/锁定/合并/拆分、别名候选确认、低置信度与回退片段强制复核。
 - 全书分析任务：进度、取消、失败重试、启动时中断恢复；用户编辑字段在重跑时保留。
 - 声音库（阶段 3）：按书为旁白/角色生成多个音色候选，试听、绑定、切换、删除未使用候选；参考音在绑定时自动去齿。
@@ -101,7 +102,7 @@ CosyVoice 引擎服务依赖 `workers/cosyvoice_worker/CosyVoice` 源码目录�
 9. 回到书籍工作区的「配音」页签，逐条生成语音；每条可试听、重新生成并查看/回退历史版本。
 10. 修改台词、说话人或情绪后，旧音频会失效，需要重新生成。
 
-以上是 0.4.0 的页面流程。v0.5.0 的角色圣经、分场与有声剧本目前通过后端 API 使用，制作台 UI 将在 P6 统一接入；P5 选角与 P7 单元音频尚未完成。
+以上是 0.4.0 的页面流程。v0.5.0 的角色圣经、分场、有声剧本与全局选角目前通过后端 API 使用，制作台 UI 将在 P6 统一接入；P7 单元音频尚未完成。
 
 「任务队列」仍是阶段 4 占位页。
 
@@ -170,6 +171,7 @@ NovelVoiceStudio/
   cache/          # ModelScope 语音模型缓存（不含 Ollama 模型）
   logs/           # 预留
   trash/          # 软删除文件
+  voice_actors/   # 全局配音员参考音：<actor_id>/reference[_deessed].wav
 ```
 
 - 音频二进制**不存入 SQLite**，只保存元数据、路径、校验和与生成参数。
@@ -200,7 +202,7 @@ npm run build
 pwsh.exe -File ../scripts/check_environment.ps1
 ```
 
-当前基线（2026-11-26）：后端 **143 passed**，前端 **33 passed / 7 files**，`vue-tsc + vite build` 通过。真实 Ollama 验收详情见 [docs/reports/STAGE2_REPORT.md](docs/reports/STAGE2_REPORT.md)，阶段 3 应用验收见 [docs/reports/STAGE3_REPORT.md](docs/reports/STAGE3_REPORT.md)，v0.5.0 P2 全书角色圣经见 [P2 实施报告](docs/reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md)，P3 分场与角色状态见 [P3 实施报告](docs/reports/P3_SCENES_REPORT_2026-11-26.md)，P4 有声剧本见 [P4 实施报告](docs/reports/P4_SCRIPT_REPORT_2026-11-26.md)，阶段 0–3 轻度验收方式见 [验收单](docs/acceptance/STAGE0_3_LIGHT_ACCEPTANCE_2026-11-26.md)。
+当前基线（2026-11-26）：后端 **149 passed**，前端 **33 passed / 7 files**，`vue-tsc + vite build` 通过。真实 Ollama 验收详情见 [docs/reports/STAGE2_REPORT.md](docs/reports/STAGE2_REPORT.md)，阶段 3 应用验收见 [docs/reports/STAGE3_REPORT.md](docs/reports/STAGE3_REPORT.md)，v0.5.0 P2 全书角色圣经见 [P2 实施报告](docs/reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md)，P3 分场与角色状态见 [P3 实施报告](docs/reports/P3_SCENES_REPORT_2026-11-26.md)，P4 有声剧本见 [P4 实施报告](docs/reports/P4_SCRIPT_REPORT_2026-11-26.md)，P5 全局配音员与自动选角见 [P5 实施报告](docs/reports/P5_CASTING_REPORT_2026-11-26.md)，阶段 0–3 轻度验收方式见 [验收单](docs/acceptance/STAGE0_3_LIGHT_ACCEPTANCE_2026-11-26.md)。
 
 ## 本机安全边界
 
@@ -257,7 +259,7 @@ docs/
 - 阶段 2：本机 Ollama 分析 → 角色/片段审核闭环；低置信度与回退片段必须人工确认。
 - 阶段 3：音色设计/绑定、逐段 WAV 生成、版本回退、引擎服务启停与真实/模拟切换已实现。音质实验与复听记录见 [阶段 3 音质报告](docs/reports/STAGE3_AUDIO_QUALITY_REPORT.md)、[阶段 3B](docs/reports/STAGE3B_AUDIO_REPAIR_REPORT.md)、[阶段 3C](docs/reports/STAGE3C_SIBILANCE_REPORT.md)；应用验收见 [docs/reports/STAGE3_REPORT.md](docs/reports/STAGE3_REPORT.md)。
 - 阶段 4 尚未实现：批量生成与任务队列、连续播放器、按章节/全书导出 M4B、工程混音与多版本管理。
-- v0.5.0 重构正在后端推进：P1 数据层、P2 全书角色圣经与 P3 逐章分场/角色状态已完成，制作台 UI、有声剧本与配音员库按设计顺延；详情见 [v0.5.0 AI 生产链重构](docs/design/V0_5_0_AI_PRODUCTION_CHAIN_2026-11-26.md)、[P2 实施报告](docs/reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md) 与 [P3 实施报告](docs/reports/P3_SCENES_REPORT_2026-11-26.md)。
+- v0.5.0 重构正在后端推进：P1 数据层、P2 全书角色圣经、P3 逐章分场/角色状态、P4 有声剧本与 P5 全局配音员/自动选角已完成，制作台 UI 与单元音频按设计顺延；详情见 [v0.5.0 AI 生产链重构](docs/design/V0_5_0_AI_PRODUCTION_CHAIN_2026-11-26.md)、[P2 实施报告](docs/reports/P2_BOOK_BIBLE_REPORT_2026-11-26.md)、[P3 实施报告](docs/reports/P3_SCENES_REPORT_2026-11-26.md)、[P4 实施报告](docs/reports/P4_SCRIPT_REPORT_2026-11-26.md) 与 [P5 实施报告](docs/reports/P5_CASTING_REPORT_2026-11-26.md)。
 - 阶段 0 的听感 gate 已由用户本人于 2026-11-25 有条件通过；sad 表现力、句尾气声与参考文本条件仍是质量待办。**许可证核对（含 `ttsfrd` / `wetext`）尚未完成**，不能视为已签收。
 
 详细架构口径见 [docs/ARCHITECTURE_NOTES.md](docs/ARCHITECTURE_NOTES.md)，阶段 2 验收记录见 [docs/reports/STAGE2_REPORT.md](docs/reports/STAGE2_REPORT.md)，POC 实测见 [docs/reports/POC_REPORT.md](docs/reports/POC_REPORT.md)，完整需求见 [需求规格说明书 v1.0](docs/requirements/NovelVoice_Studio_需求规格说明书_v1.0.md)，全部文档见 [docs/README.md](docs/README.md)。

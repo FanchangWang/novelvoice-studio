@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from types import MethodType
 
@@ -41,8 +42,18 @@ def _wait_bible(client: TestClient, book_id: str, timeout: float = 30.0) -> dict
     raise AssertionError(f"角色圣经任务未在 {timeout}s 内结束: {last}")
 
 
-def test_book_bible_mock_pipeline(client: TestClient, upload, sample_text: str) -> None:
+def test_book_bible_mock_pipeline(
+    client: TestClient, upload, sample_text: str, monkeypatch
+) -> None:
     book_id = _import_sample(upload, sample_text)
+    gate = threading.Event()
+    original_run = BibleService._run_job
+
+    def blocked_run(self, *args, **kwargs):
+        gate.wait(10)
+        return original_run(self, *args, **kwargs)
+
+    monkeypatch.setattr(BibleService, "_run_job", blocked_run)
     response = client.post(f"/api/v1/books/{book_id}/bible/analysis")
     assert response.status_code == 202
     job = response.json()
@@ -51,6 +62,7 @@ def test_book_bible_mock_pipeline(client: TestClient, upload, sample_text: str) 
 
     conflict = client.post(f"/api/v1/books/{book_id}/bible/analysis")
     assert conflict.status_code == 409
+    gate.set()
 
     status = _wait_bible(client, book_id)
     assert status["job"]["status"] == "completed"

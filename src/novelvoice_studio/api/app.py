@@ -22,6 +22,7 @@ from novelvoice_studio.core.logging import configure_logging
 from novelvoice_studio.db.migrate import run_migrations
 from novelvoice_studio.db.session import check_database, create_db_engine, create_session_factory
 from novelvoice_studio.services.analysis import recover_interrupted_analysis
+from novelvoice_studio.services.casting import recover_interrupted_casting
 from novelvoice_studio.services.scripts import recover_interrupted_scripts
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     recovered = recover_interrupted_analysis(session_factory)
     with session_factory() as session:
         script_recovered = recover_interrupted_scripts(session)
+        casting_recovered = recover_interrupted_casting(session)
         session.commit()
     if (
         recovered["jobs"]
@@ -64,16 +66,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         or recovered["scene_jobs"]
         or script_recovered["jobs"]
         or script_recovered["chapters"]
+        or casting_recovered["jobs"]
     ):
         logger.warning(
             "已恢复中断的分析任务：jobs=%s chapters=%s bible_jobs=%s scene_jobs=%s "
-            "script_jobs=%s script_chapters=%s",
+            "script_jobs=%s script_chapters=%s casting_jobs=%s casting_books=%s",
             recovered["jobs"],
             recovered["chapters"],
             recovered["bible_jobs"],
             recovered["scene_jobs"],
             script_recovered["jobs"],
             script_recovered["chapters"],
+            casting_recovered["jobs"],
+            casting_recovered["books"],
         )
 
     @asynccontextmanager

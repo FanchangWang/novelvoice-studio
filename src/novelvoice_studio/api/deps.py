@@ -14,6 +14,7 @@ from novelvoice_studio.config import Settings
 from novelvoice_studio.services.analysis import AnalysisService
 from novelvoice_studio.services.bible import BibleService
 from novelvoice_studio.services.books import BookService
+from novelvoice_studio.services.casting import CastingService
 from novelvoice_studio.services.chapter_ops import ChapterService
 from novelvoice_studio.services.character_ops import CharacterService
 from novelvoice_studio.services.importer import ImportService
@@ -129,6 +130,14 @@ def get_script_service(
     return ScriptService(settings, factory, registry)
 
 
+def get_casting_service(
+    settings: Settings = Depends(get_app_settings),
+    factory: sessionmaker[Session] = Depends(get_session_factory),
+    registry: ProviderRegistry = Depends(get_registry),
+) -> CastingService:
+    return CastingService(settings, factory, registry)
+
+
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 SessionDep = Annotated[Session, Depends(get_session)]
 EngineDep = Annotated[Engine, Depends(get_engine)]
@@ -144,3 +153,4 @@ VoiceServiceDep = Annotated[VoiceService, Depends(get_voice_service)]
 AudioServiceDep = Annotated[AudioService, Depends(get_audio_service)]
 SceneServiceDep = Annotated[SceneService, Depends(get_scene_service)]
 ScriptServiceDep = Annotated[ScriptService, Depends(get_script_service)]
+CastingServiceDep = Annotated[CastingService, Depends(get_casting_service)]
