@@ -142,7 +142,7 @@ def test_full_book_analysis_job(client: TestClient, upload, sample_text: str) ->
     assert response.status_code == 202
     job = response.json()
     assert job["job_type"] == "chapter_analysis"
-    assert job["total_items"] == 4
+    assert job["total_items"] == 3
     assert job["status"] in {"pending", "running", "completed"}
 
     status = _wait_job(client, book_id)
@@ -150,17 +150,19 @@ def test_full_book_analysis_job(client: TestClient, upload, sample_text: str) ->
     assert completed is not None
     assert completed["status"] == "completed"
     assert completed["progress"] == 1.0
-    assert completed["completed_items"] == 4
-    assert status["completed_chapters"] == 4
+    assert completed["completed_items"] == 3
+    assert status["completed_chapters"] == 3
     assert status["review_chapters"] >= 1
     assert status["total_segments"] > 0
     assert status["review_segments"] > 0
     assert status["total_characters"] > 0
+    included = [item for item in status["chapters"] if item["analysis_included"]]
+    assert len(included) == 3
     assert all(
         item["analysis_status"] in {"completed", "needs_review"}
-        for item in status["chapters"]
+        for item in included
     )
-    assert all(item["has_summary"] for item in status["chapters"])
+    assert all(item["has_summary"] for item in included)
 
 
 def test_chapter_too_long_marks_failed(
@@ -206,7 +208,9 @@ def test_book_analysis_conflict_and_cancel(
     client: TestClient, upload, sample_text: str, db_session
 ) -> None:
     book_id = _import_sample(upload, sample_text, title="任务冲突")
-    chapter = _chapters(client, book_id)[0]
+    chapter = next(
+        item for item in _chapters(client, book_id) if item["analysis_included"]
+    )
     active = GenerationJob(
         id=new_id("job"),
         book_id=book_id,

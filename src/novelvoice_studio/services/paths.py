@@ -11,6 +11,7 @@ from pathlib import Path
 from novelvoice_studio.core.errors import AppError, ValidationError
 
 _ID_PATTERN = re.compile(r"^[a-z]{2,8}_[0-9a-f]{16}$")
+_BOOK_ID_PATTERN = re.compile(r"^book_[1-9][0-9]*$")
 
 
 def new_id(prefix: str) -> str:
@@ -18,6 +19,8 @@ def new_id(prefix: str) -> str:
 
 
 def validate_id(value: str, prefix: str | None = None) -> str:
+    if prefix == "book" and _BOOK_ID_PATTERN.fullmatch(value or ""):
+        return value
     if not _ID_PATTERN.fullmatch(value or ""):
         raise ValidationError("ID 格式无效")
     if prefix and not value.startswith(f"{prefix}_"):

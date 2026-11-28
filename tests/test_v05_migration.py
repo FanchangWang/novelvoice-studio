@@ -14,7 +14,7 @@ from novelvoice_studio.db.v05_backfill import backfill_v05, stable_id
 
 OLD_REVISION = "5c1d9a7b3e2f"
 NEW_REVISION = "9f3c2a7b5d10"
-HEAD_REVISION = "a4c1e8d29b73"
+HEAD_REVISION = "d4f6a2b9c810"
 TS = "2026-11-01 00:00:00"
 
 BOOK_A = "book_1111111111111111"
@@ -546,6 +546,10 @@ def test_v05_migration_backfills_legacy_data(tmp_path: Path) -> None:
 
     command.upgrade(build_alembic_config(legacy), "head")
     assert current_revision(legacy.db_path) == HEAD_REVISION
+    assert _scalar(legacy, "SELECT volume_number FROM chapters WHERE id = ?", (CHAPTER_A,)) == 0
+    assert _scalar(legacy, "SELECT volume_title FROM chapters WHERE id = ?", (CHAPTER_A,)) == "默认卷"
+    assert _scalar(legacy, "SELECT chapter_kind FROM chapters WHERE id = ?", (CHAPTER_A,)) == "story"
+    assert _scalar(legacy, "SELECT analysis_included FROM chapters WHERE id = ?", (CHAPTER_A,)) == 1
 
     bible_id = stable_id("bible", f"book:{BOOK_A}:1")
     bible_c_id = stable_id("bible", f"book:{BOOK_C}:1")

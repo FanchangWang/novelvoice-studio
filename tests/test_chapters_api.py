@@ -177,6 +177,70 @@ def test_chapter_not_found(client) -> None:
     assert client.get("/api/v1/chapters/not-valid").status_code == 422
 
 
+def test_chapter_pagination_and_kind_filter(client, upload, sample_text: str) -> None:
+    book_id = _import_sample(upload, sample_text)
+    all_items = _chapters(client, book_id)
+    assert len(all_items) >= 4
+
+    first = client.get(
+        f"/api/v1/books/{book_id}/chapters",
+        params={"page": 2, "page_size": 2},
+    )
+    assert first.status_code == 200
+    assert first.json()["total"] == len(all_items)
+    assert first.json()["page"] == 2
+    assert first.json()["page_size"] == 2
+    assert [item["sequence"] for item in first.json()["items"]] == [3, 4]
+
+    preface = client.get(
+        f"/api/v1/books/{book_id}/chapters",
+        params={"kind": "extra", "page_size": 20},
+    )
+    assert preface.status_code == 200
+    assert preface.json()["items"]
+    assert all(item["chapter_kind"] == "extra" for item in preface.json()["items"])
+
+
+def test_chapter_filter_rejects_invalid_kind_and_page_size(client, upload, sample_text: str) -> None:
+    book_id = _import_sample(upload, sample_text)
+    assert client.get(
+        f"/api/v1/books/{book_id}/chapters", params={"kind": "unknown"}
+    ).status_code == 422
+    assert client.get(
+        f"/api/v1/books/{book_id}/chapters", params={"page_size": 101}
+    ).status_code == 422
+
+
+def test_unclassified_chapter_is_excluded_until_confirmed(
+    client, upload, sample_text: str
+) -> None:
+    book_id = _import_sample(upload, sample_text)
+    chapter = _chapters(client, book_id)[1]
+
+    unclassified = client.patch(
+        f"/api/v1/chapters/{chapter['id']}",
+        json={"chapter_kind": "unclassified"},
+    )
+    assert unclassified.status_code == 200
+    assert unclassified.json()["chapter_kind"] == "unclassified"
+    assert unclassified.json()["classification_status"] == "confirmed"
+    assert unclassified.json()["analysis_included"] is False
+
+    blocked = client.patch(
+        f"/api/v1/chapters/{chapter['id']}",
+        json={"analysis_included": True},
+    )
+    assert blocked.status_code == 422
+
+    confirmed = client.patch(
+        f"/api/v1/chapters/{chapter['id']}",
+        json={"chapter_kind": "story", "analysis_included": True},
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["classification_status"] == "confirmed"
+    assert confirmed.json()["analysis_included"] is True
+
+
 def test_chapter_offset_mismatch_detected(
     client, upload, sample_text: str, db_session
 ) -> None:
@@ -190,3 +254,24 @@ def test_chapter_offset_mismatch_detected(
     response = client.get(f"/api/v1/chapters/{chapter['id']}")
     assert response.status_code == 500
     assert response.json()["error"]["code"] == "source_offset_mismatch"
+
+
+def test_special_chapter_classification_and_manual_include(
+    client, upload, sample_text: str
+) -> None:
+    book_id = _import_sample(upload, sample_text)
+    preface = _chapters(client, book_id)[0]
+    assert preface["chapter_kind"] == "extra"
+    assert preface["analysis_included"] is False
+
+    excluded = client.post(f"/api/v1/chapters/{preface['id']}/analysis")
+    assert excluded.status_code == 422
+    assert excluded.json()["error"]["code"] == "chapter_excluded"
+
+    included = client.patch(
+        f"/api/v1/chapters/{preface['id']}",
+        json={"chapter_kind": "story", "analysis_included": True},
+    )
+    assert included.status_code == 200
+    assert included.json()["chapter_kind"] == "story"
+    assert included.json()["analysis_included"] is True

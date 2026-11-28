@@ -19,7 +19,11 @@ const navItems = [
 
 function isActive(path: string): boolean {
   if (path === '/library') {
-    return route.path === '/library' || route.path.startsWith('/books/')
+    return (
+      route.path === '/library' ||
+      route.path === '/trash' ||
+      route.path.startsWith('/books/')
+    )
   }
   return route.path === path
 }

@@ -25,6 +25,7 @@ from novelvoice_studio.ai.base import (
     ChapterSummaryResult,
     CharacterAnalysisResult,
     CharacterDraft,
+    ImportStructureResult,
     LLMProvider,
     ProviderHealth,
     SceneCharacterStateDraft,
@@ -250,6 +251,16 @@ class MockLLMProvider(LLMProvider):
 
     def list_models(self) -> list[str]:
         return [self.model]
+
+    def inspect_import(
+        self,
+        front_matter: str,
+        candidates: list[dict],
+        rule_headings: list[dict],
+        *,
+        include_metadata: bool = True,
+    ) -> ImportStructureResult:
+        return ImportStructureResult(meta={"provider": self.name, "ai_used": False})
 
     def analyze_characters(
         self, text: str, known_characters: list[dict], context: dict | None = None

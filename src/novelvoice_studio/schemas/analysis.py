@@ -256,6 +256,10 @@ class AnalysisChapterStatus(BaseModel):
     id: str
     title: str
     sequence: int
+    volume_number: int = 0
+    volume_title: str = "默认卷"
+    chapter_kind: Literal["story", "extra", "author_note", "unclassified"] = "story"
+    analysis_included: bool = True
     analysis_status: str
     has_summary: bool
     summary: str | None = None

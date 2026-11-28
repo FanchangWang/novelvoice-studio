@@ -7,7 +7,7 @@
   workers/cosyvoice_worker/.venv/Scripts/python.exe workers/cosyvoice_worker/server.py
 
 环境变量：
-  NOVELVOICE_MODEL_CACHE       模型缓存根目录
+  NOVELVOICE_MODEL_CACHE       模型缓存根目录（默认 Documents/ModelScope）
   NOVELVOICE_COSYVOICE_MODEL_DIR 直接指定模型目录（优先）
   NOVELVOICE_COSYVOICE_PRELOAD=1 启动时立即加载模型
 """
@@ -44,7 +44,7 @@ ENGINE_CONTROL_TOKEN = os.getenv("NOVELVOICE_ENGINE_CONTROL_TOKEN", "")
 DEFAULT_CACHE = Path(
     os.getenv(
         "NOVELVOICE_MODEL_CACHE",
-        str(Path.home() / "Documents" / "NovelVoiceStudio" / "cache" / "modelscope"),
+        str(Path.home() / "Documents" / "ModelScope"),
     )
 )
 DEFAULT_MODEL_DIR = Path(
@@ -94,7 +94,11 @@ def _ensure_model():  # type: ignore[no-untyped-def]
         if _model is not None:
             return _model
         if not DEFAULT_MODEL_DIR.is_dir():
-            _load_error = f"模型目录不存在：{DEFAULT_MODEL_DIR}"
+            _load_error = (
+                f"模型目录不存在：{DEFAULT_MODEL_DIR}。"
+                "请在项目根目录手动运行 pwsh.exe -File scripts/download_models.ps1，"
+                "下载完成后重启引擎服务；应用不会自动下载模型。"
+            )
             raise RuntimeError(_load_error)
         if not SOURCE_DIR.is_dir():
             _load_error = f"CosyVoice 源码目录不存在：{SOURCE_DIR}"

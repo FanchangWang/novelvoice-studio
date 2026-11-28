@@ -11,6 +11,7 @@ import type {
   ChapterListResponse,
   ChapterMutationResponse,
   ChapterSummary,
+  ChapterUpdatePayload,
   CharacterListResponse,
   CharacterMergeResponse,
   CharacterOut,
@@ -41,6 +42,8 @@ import type {
   BibleStatusResponse,
   CastAssignPayload,
   CastingStatusResponse,
+  GeneralVoicePresetListOut,
+  ProductionBatchRequest,
   ProductionOverviewOut,
   ReviewBatchResolvePayload,
   ReviewBatchResolveResponse,
@@ -54,6 +57,7 @@ import type {
   ScriptVersionListResponse,
   ScriptVersionOut,
   ScriptUnitAudioOut,
+  ScriptUnitOut,
   UnitAudioVersionListResponse,
   VoiceActorCreatePayload,
   VoiceActorListResponse,
@@ -183,8 +187,11 @@ export const api = {
     return request<PublicSettings>('/system/settings')
   },
 
-  listBooks(includeDeleted = false): Promise<BookListResponse> {
-    const query = includeDeleted ? '?include_deleted=true' : ''
+  listBooks(includeDeleted = false, deletedOnly = false): Promise<BookListResponse> {
+    const params = new URLSearchParams()
+    if (includeDeleted) params.set('include_deleted', 'true')
+    if (deletedOnly) params.set('deleted_only', 'true')
+    const query = params.size ? `?${params.toString()}` : ''
     return request<BookListResponse>(`/books${query}`)
   },
 
@@ -206,9 +213,24 @@ export const api = {
     })
   },
 
-  listChapters(bookId: string): Promise<ChapterListResponse> {
+  permanentlyDeleteBook(bookId: string): Promise<void> {
+    return request<void>(
+      `/books/${encodeURIComponent(bookId)}/permanent`,
+      { method: 'DELETE' },
+    )
+  },
+
+  listChapters(
+    bookId: string,
+    options: { page?: number; pageSize?: number; kind?: ChapterSummary['chapter_kind'] } = {},
+  ): Promise<ChapterListResponse> {
+    const params = new URLSearchParams()
+    if (options.page !== undefined) params.set('page', String(options.page))
+    if (options.pageSize !== undefined) params.set('page_size', String(options.pageSize))
+    if (options.kind !== undefined) params.set('kind', options.kind)
+    const query = params.size ? `?${params.toString()}` : ''
     return request<ChapterListResponse>(
-      `/books/${encodeURIComponent(bookId)}/chapters`,
+      `/books/${encodeURIComponent(bookId)}/chapters${query}`,
     )
   },
 
@@ -216,10 +238,13 @@ export const api = {
     return request<ChapterDetail>(`/chapters/${encodeURIComponent(chapterId)}`)
   },
 
-  updateChapter(chapterId: string, title: string): Promise<ChapterSummary> {
+  updateChapter(
+    chapterId: string,
+    payload: ChapterUpdatePayload,
+  ): Promise<ChapterSummary> {
     return request<ChapterSummary>(
       `/chapters/${encodeURIComponent(chapterId)}`,
-      jsonBody('PATCH', { title }),
+      jsonBody('PATCH', payload),
     )
   },
 
@@ -513,7 +538,9 @@ export const api = {
       ['custom_regex', options.customRegex],
       [
         'replace_book_id',
-        options.duplicatePolicy === 'replace' ? options.replaceBookId : undefined,
+        options.duplicatePolicy === 'replace' || options.duplicatePolicy === 'merge'
+          ? options.replaceBookId
+          : undefined,
       ],
     ]
     for (const [key, value] of fields) {
@@ -536,12 +563,34 @@ export const api = {
     )
   },
 
+  startAutoProduction(bookId: string, refreshBible = false): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/books/${encodeURIComponent(bookId)}/production/auto`,
+      jsonBody('POST', { refresh_bible: refreshBible }),
+    )
+  },
+
+  getAutoProduction(jobId: string): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/auto-production/${encodeURIComponent(jobId)}`,
+    )
+  },
+
+  cancelAutoProduction(jobId: string): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/auto-production/${encodeURIComponent(jobId)}/cancel`,
+      { method: 'POST' },
+    )
+  },
+
   listReviews(params: {
     bookId?: string | null
     status?: string | null
     severity?: string | null
     code?: string | null
     entityType?: string | null
+    chapterId?: string | null
+    category?: 'content' | 'system' | 'all'
     limit?: number
     offset?: number
   } = {}): Promise<ReviewListResponse> {
@@ -553,6 +602,8 @@ export const api = {
     if (params.severity) query.set('severity', params.severity)
     if (params.code) query.set('code', params.code)
     if (params.entityType) query.set('entity_type', params.entityType)
+    if (params.chapterId) query.set('chapter_id', params.chapterId)
+    if (params.category) query.set('category', params.category)
     if (params.limit !== undefined) query.set('limit', String(params.limit))
     if (params.offset !== undefined) query.set('offset', String(params.offset))
     const suffix = query.toString()
@@ -575,6 +626,29 @@ export const api = {
     return request<ReviewBatchResolveResponse>(
       '/reviews/batch-resolve',
       jsonBody('POST', payload),
+    )
+  },
+
+  startProductionBatch(
+    bookId: string,
+    payload: ProductionBatchRequest,
+  ): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/books/${encodeURIComponent(bookId)}/production/batch`,
+      jsonBody('POST', payload),
+    )
+  },
+
+  getProductionBatch(jobId: string): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/production-batches/${encodeURIComponent(jobId)}`,
+    )
+  },
+
+  cancelProductionBatch(jobId: string): Promise<AnalysisJob> {
+    return request<AnalysisJob>(
+      `/production-batches/${encodeURIComponent(jobId)}/cancel`,
+      { method: 'POST' },
     )
   },
 
@@ -649,16 +723,27 @@ export const api = {
     )
   },
 
+  updateScriptUnitSpeaker(
+    unitId: string,
+    speakerType: 'character' | 'narrator' | 'unknown',
+    speakerId: string | null,
+  ): Promise<ScriptUnitOut> {
+    return request<ScriptUnitOut>(
+      `/script-units/${encodeURIComponent(unitId)}/speaker`,
+      jsonBody('PATCH', { speaker_type: speakerType, speaker_id: speakerId }),
+    )
+  },
+
   listScriptVersions(chapterId: string): Promise<ScriptVersionListResponse> {
     return request<ScriptVersionListResponse>(
       `/chapters/${encodeURIComponent(chapterId)}/script/versions`,
     )
   },
 
-  startScript(chapterId: string): Promise<AnalysisJob> {
+  startScript(chapterId: string, retryScenes = false): Promise<AnalysisJob> {
     return request<AnalysisJob>(
       `/chapters/${encodeURIComponent(chapterId)}/script`,
-      jsonBody('POST', { adaptation_level: 'light' }),
+      jsonBody('POST', { adaptation_level: 'light', retry_scenes: retryScenes }),
     )
   },
 
@@ -687,6 +772,8 @@ export const api = {
     q?: string
     favorite?: boolean
     status?: string
+    scope?: 'general' | 'book'
+    bookId?: string
     limit?: number
     offset?: number
   } = {}): Promise<VoiceActorListResponse> {
@@ -694,11 +781,24 @@ export const api = {
     if (params.q) query.set('q', params.q)
     if (params.favorite !== undefined) query.set('favorite', String(params.favorite))
     if (params.status) query.set('status', params.status)
+    if (params.scope) query.set('scope', params.scope)
+    if (params.bookId) query.set('book_id', params.bookId)
     if (params.limit !== undefined) query.set('limit', String(params.limit))
     if (params.offset !== undefined) query.set('offset', String(params.offset))
     const suffix = query.toString()
     return request<VoiceActorListResponse>(
       `/voice-actors${suffix ? `?${suffix}` : ''}`,
+    )
+  },
+
+  listGeneralVoicePresets(): Promise<GeneralVoicePresetListOut> {
+    return request<GeneralVoicePresetListOut>('/voice-actors/general-presets')
+  },
+
+  generateGeneralVoicePreset(presetId: string): Promise<VoiceActorOut> {
+    return request<VoiceActorOut>(
+      `/voice-actors/general-presets/${encodeURIComponent(presetId)}/generate`,
+      { method: 'POST' },
     )
   },
 

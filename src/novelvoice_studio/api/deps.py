@@ -19,7 +19,9 @@ from novelvoice_studio.services.chapter_ops import ChapterService
 from novelvoice_studio.services.character_ops import CharacterService
 from novelvoice_studio.services.importer import ImportService
 from novelvoice_studio.services.audio import AudioService
+from novelvoice_studio.services.auto_production import AutoProductionService
 from novelvoice_studio.services.production import ProductionService
+from novelvoice_studio.services.production_batch import ProductionBatchService
 from novelvoice_studio.services.scenes import SceneService
 from novelvoice_studio.services.scripts import ScriptService
 from novelvoice_studio.services.segment_ops import SegmentService
@@ -69,8 +71,9 @@ def get_chapter_service(
 def get_import_service(
     settings: Settings = Depends(get_app_settings),
     session: Session = Depends(get_session),
+    registry: ProviderRegistry = Depends(get_registry),
 ) -> ImportService:
-    return ImportService(settings, session)
+    return ImportService(settings, session, registry)
 
 
 def get_character_service(session: Session = Depends(get_session)) -> CharacterService:
@@ -148,6 +151,14 @@ def get_casting_service(
     return CastingService(settings, factory, registry)
 
 
+def get_auto_production_service(
+    settings: Settings = Depends(get_app_settings),
+    factory: sessionmaker[Session] = Depends(get_session_factory),
+    registry: ProviderRegistry = Depends(get_registry),
+) -> AutoProductionService:
+    return AutoProductionService(settings, factory, registry)
+
+
 SettingsDep = Annotated[Settings, Depends(get_app_settings)]
 SessionDep = Annotated[Session, Depends(get_session)]
 EngineDep = Annotated[Engine, Depends(get_engine)]
@@ -171,4 +182,23 @@ def get_production_service(session: Session = Depends(get_session)) -> Productio
     return ProductionService(session)
 
 
+def get_production_batch_service(
+    settings: Settings = Depends(get_app_settings),
+    factory: sessionmaker[Session] = Depends(get_session_factory),
+    registry: ProviderRegistry = Depends(get_registry),
+) -> ProductionBatchService:
+    return ProductionBatchService(
+        settings,
+        factory,
+        SceneService(settings, factory, registry),
+        ScriptService(settings, factory, registry),
+    )
+
+
 ProductionServiceDep = Annotated[ProductionService, Depends(get_production_service)]
+ProductionBatchServiceDep = Annotated[
+    ProductionBatchService, Depends(get_production_batch_service)
+]
+AutoProductionServiceDep = Annotated[
+    AutoProductionService, Depends(get_auto_production_service)
+]

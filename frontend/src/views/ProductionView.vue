@@ -9,12 +9,11 @@ import {
   useMessage,
 } from 'naive-ui'
 
-import type { ProductionChapterOut } from '@/api/types'
-import BiblePanel from '@/components/production/BiblePanel.vue'
-import CastingPanel from '@/components/production/CastingPanel.vue'
-import PlanPanel from '@/components/production/PlanPanel.vue'
+import type { ProductionChapterOut, ReviewItemOut } from '@/api/types'
+import ChaptersPanel from '@/components/production/ChaptersPanel.vue'
+import CharactersPanel from '@/components/production/CharactersPanel.vue'
+import OverviewPanel from '@/components/production/OverviewPanel.vue'
 import ReviewInbox from '@/components/production/ReviewInbox.vue'
-import ScenesPanel from '@/components/production/ScenesPanel.vue'
 import ScriptPanel from '@/components/production/ScriptPanel.vue'
 import { useProductionStore } from '@/stores/production'
 import { errorMessage } from '@/utils/errors'
@@ -29,94 +28,167 @@ const router = useRouter()
 const message = useMessage()
 const production = useProductionStore()
 
-const tab = ref<ProductionTab>('plan')
-const sceneChapterId = ref<string | null>(null)
+const tab = ref<ProductionTab>('overview')
 const scriptChapterId = ref<string | null>(null)
+const reviewChapterId = ref<string | null>(null)
+const scriptFocusUnitId = ref<string | null>(null)
+const characterFocusId = ref<string | null>(null)
+const sourceRequest = ref<{
+  chapterId: string
+  quote?: string
+  start?: number
+  end?: number
+} | null>(null)
 
 const bookId = computed(() => {
   const raw = route.params.bookId
   return typeof raw === 'string' ? raw : ''
 })
 const overview = computed(() => production.overview)
+const autoProductionActive = computed(() => Boolean(
+  overview.value?.job && ['pending', 'running'].includes(overview.value.job.status),
+))
+const autoStages = computed<Record<string, unknown>>(() => {
+  const result = overview.value?.job?.job_type === 'auto_production' ? overview.value.job.result : null
+  const stages = result?.stages
+  return stages && typeof stages === 'object' ? stages as Record<string, unknown> : {}
+})
+
+const stageOrder = ['bible', 'casting', 'script', 'audio']
+type PanelStage = 'ready' | 'waiting' | 'running' | 'blocked'
+function panelStage(key: 'casting' | 'script'): PanelStage {
+  const value = autoStages.value[key]
+  const rawStatus = value && typeof value === 'object'
+    ? (value as Record<string, unknown>).status
+    : null
+  if (rawStatus === 'running') return 'running'
+  if (rawStatus === 'pending' || rawStatus === 'cancelled') return 'waiting'
+  if (rawStatus === 'blocked') return 'blocked'
+  if (typeof rawStatus === 'string') return 'ready'
+
+  const stages = autoStages.value
+  const rawCurrent = overview.value?.job?.result?.stage
+  const current = typeof rawCurrent === 'string'
+    ? rawCurrent
+    : Object.entries(stages).find(([, stage]) => {
+      if (!stage || typeof stage !== 'object') return false
+      const status = (stage as Record<string, unknown>).status
+      return status === 'running' || status === 'failed'
+    })?.[0]
+  const currentIndex = current ? stageOrder.indexOf(current) : -1
+  const keyIndex = stageOrder.indexOf(key)
+  if (currentIndex >= 0) {
+    if (currentIndex > keyIndex) return 'ready'
+    if (currentIndex === keyIndex) {
+      return overview.value?.job?.status === 'failed' || overview.value?.job?.status === 'completed'
+        ? 'ready'
+        : 'running'
+    }
+    return 'waiting'
+  }
+  if (autoProductionActive.value) return 'waiting'
+  if (key === 'casting' && !overview.value?.bible_ready) return 'waiting'
+  if (key === 'script' && !overview.value?.script_unit_count) return 'waiting'
+  return 'ready'
+}
+function panelStageMessage(key: 'casting' | 'script'): { title: string; detail: string } {
+  const status = panelStage(key)
+  if (status === 'running') {
+    return key === 'casting'
+      ? { title: '正在整理角色与分配声音', detail: '任务完成后，角色会按主角、重要配角和群演出现在这里。' }
+      : { title: '正在生成逐章剧本', detail: '全书分析和选角已完成，剧本正在按章节顺序生成。完成后会自动继续配音。' }
+  }
+  if (status === 'blocked') {
+    return { title: '前序任务尚未完成', detail: '请先在总览处理前置阶段；完成后本页会自动展示可用结果。' }
+  }
+  if (key === 'script') {
+    return { title: '剧本还未开放', detail: '请先运行一键自动制作；处理到剧本阶段后，才能查看和调整逐章剧本。' }
+  }
+  return { title: '角色与声音还未整理', detail: '全书分析完成后会自动整理角色并选角，无需先手动创建角色。' }
+}
 
 const tabs = computed<
   Array<{ key: ProductionTab; label: string; count?: number; tone?: 'warning' | 'default' }>
 >(() => [
-  { key: 'plan', label: '方案' },
-  { key: 'bible', label: '设定集' },
-  { key: 'scenes', label: '分场' },
+  { key: 'overview', label: '总览' },
+  { key: 'chapters', label: '章节' },
   { key: 'script', label: '剧本' },
-  { key: 'casting', label: '选角' },
+  { key: 'casting', label: '角色' },
   {
     key: 'reviews',
     label: '异常',
-    count: overview.value?.open_reviews,
-    tone: overview.value?.blocking_reviews || overview.value?.warning_reviews ? 'warning' : 'default',
+    count: overview.value?.blocking_reviews || undefined,
+    tone: overview.value?.blocking_reviews ? 'warning' : 'default',
   },
 ])
 
-function firstSceneChapter(chapters: ProductionChapterOut[]): string | null {
-  return (
-    chapters.find(
-      (chapter) => chapter.scene_status === 'not_started' || chapter.scene_count === 0,
-    )?.id ??
-    chapters.find((chapter) => chapter.scene_status === 'needs_review')?.id ??
-    chapters[0]?.id ??
-    null
-  )
-}
-
 function firstScriptChapter(chapters: ProductionChapterOut[]): string | null {
-  return (
-    chapters.find(
-      (chapter) => chapter.scene_count > 0 && chapter.unit_count === 0,
-    )?.id ??
-    chapters.find((chapter) => chapter.script_status === 'needs_review')?.id ??
-    chapters[0]?.id ??
-    null
-  )
+  return chapters.find((chapter) => chapter.analysis_included)?.id ?? null
 }
 
 function syncChapterDefaults(): void {
   const chapters = overview.value?.chapters ?? []
-  if (!chapters.length) {
-    sceneChapterId.value = null
-    scriptChapterId.value = null
-    return
-  }
-  if (!chapters.some((chapter) => chapter.id === sceneChapterId.value)) {
-    sceneChapterId.value = firstSceneChapter(chapters)
-  }
-  if (!chapters.some((chapter) => chapter.id === scriptChapterId.value)) {
+  const included = chapters.filter((chapter) => chapter.analysis_included)
+  if (!included.some((chapter) => chapter.id === scriptChapterId.value)) {
     scriptChapterId.value = firstScriptChapter(chapters)
   }
 }
 
 function setTab(next: ProductionTab, updateRoute = true): void {
   tab.value = next
+  if (next !== 'reviews') {
+    reviewChapterId.value = null
+  }
   if (updateRoute) {
-    const query = { ...route.query, tab: next === 'plan' ? undefined : next }
+    const query = { ...route.query, tab: next === 'overview' ? undefined : next }
     void router.replace({ query })
   }
 }
 
-function openChapter(chapterId: string, target: 'scenes' | 'script'): void {
-  if (target === 'scenes') {
-    sceneChapterId.value = chapterId
-  } else {
-    scriptChapterId.value = chapterId
-  }
-  setTab(target)
+function openChapter(chapterId: string): void {
+  scriptChapterId.value = chapterId
+  setTab('script')
 }
 
-function openReviews(): void {
+function openReviews(chapterId: string | null = null): void {
   setTab('reviews')
+  reviewChapterId.value = chapterId
+}
+
+function openLocation(item: ReviewItemOut): void {
+  const location = item.location
+  if (location.unit_id) {
+    if (location.chapter_id) scriptChapterId.value = location.chapter_id
+    scriptFocusUnitId.value = location.unit_id
+    setTab('script')
+    return
+  }
+  if (location.character_id) {
+    characterFocusId.value = location.character_id
+    setTab('casting')
+    return
+  }
+  if (location.chapter_id) {
+    if (item.action_type === 'chapter_classification') {
+      setTab('chapters')
+      return
+    }
+    sourceRequest.value = {
+      chapterId: location.chapter_id,
+      ...(location.quote ? { quote: location.quote } : {}),
+      ...(typeof location.source_start_offset === 'number' ? { start: location.source_start_offset } : {}),
+      ...(typeof location.source_end_offset === 'number' ? { end: location.source_end_offset } : {}),
+    }
+    setTab('chapters')
+    return
+  }
+  message.warning('该项没有可定位的内容位置，请在总览查看后台任务状态')
 }
 
 function parseTab(): ProductionTab {
   const raw = typeof route.query.tab === 'string' ? route.query.tab : ''
-  const allowed: ProductionTab[] = ['plan', 'bible', 'scenes', 'script', 'casting', 'reviews']
-  return (allowed as string[]).includes(raw) ? (raw as ProductionTab) : 'plan'
+  const allowed: ProductionTab[] = ['overview', 'chapters', 'script', 'casting', 'reviews']
+  return (allowed as string[]).includes(raw) ? (raw as ProductionTab) : 'overview'
 }
 
 async function load(showMessage = false): Promise<void> {
@@ -141,6 +213,12 @@ async function onPanelChanged(): Promise<void> {
   await production.refresh()
   syncChapterDefaults()
 }
+
+watch(
+  () => overview.value?.chapters,
+  syncChapterDefaults,
+  { deep: true },
+)
 
 watch(
   () => route.query.tab,
@@ -195,7 +273,7 @@ onBeforeUnmount(() => {
               >
                 {{ PRODUCTION_STATUS_LABELS[overview.derived_status] ?? overview.derived_status }}
               </NTag>
-              <NTag v-if="overview?.job" size="small" :bordered="false" type="info">
+              <NTag v-if="overview?.job && ['pending', 'running'].includes(overview.job.status)" size="small" :bordered="false" type="info">
                 任务进行中
               </NTag>
             </div>
@@ -203,7 +281,7 @@ onBeforeUnmount(() => {
               {{ overview?.title ?? '制作台' }}
             </h1>
             <p class="mt-1 text-[10px] text-fog-500">
-              导入原文 → 设定集 → 分场 → 剧本 → 选角 → 生成音频
+              导入原文 → 章节整理 → 全书分析 → 角色与选角 → 剧本 → 自动配音
               <span class="mx-1.5 text-fog-600">·</span>
               {{ overview?.chapter_count ?? 0 }} 章
               <span class="mx-1.5 text-fog-600">·</span>
@@ -223,13 +301,6 @@ onBeforeUnmount(() => {
           >
             刷新
           </NButton>
-          <NButton
-            size="small"
-            secondary
-            @click="router.push({ name: 'workspace', params: { bookId } })"
-          >
-            原文与校对
-          </NButton>
         </div>
       </div>
 
@@ -244,7 +315,7 @@ onBeforeUnmount(() => {
               ? 'bg-ink-900/80 text-fog-100'
               : 'text-fog-500 hover:bg-ink-900/40 hover:text-fog-300'
           "
-          @click="setTab(item.key)"
+          @click="item.key === 'reviews' ? openReviews() : setTab(item.key)"
         >
           {{ item.label }}
           <span
@@ -292,53 +363,72 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-else>
-          <PlanPanel
-            v-if="tab === 'plan'"
+          <OverviewPanel
+            v-if="tab === 'overview'"
+            :book-id="bookId"
             :overview="overview"
+            @changed="onPanelChanged"
             @navigate="setTab"
-            @open-chapter="openChapter"
           />
 
-          <BiblePanel
-            v-else-if="tab === 'bible'"
+          <ChaptersPanel
+            v-else-if="tab === 'chapters'"
             :book-id="bookId"
+            :overview="overview"
+            :source-request="sourceRequest"
             @changed="onPanelChanged"
+            @open-script="openChapter"
+            @source-closed="sourceRequest = null"
           />
 
-          <ScenesPanel
-            v-else-if="tab === 'scenes'"
-            v-model:chapter-id="sceneChapterId"
-            :book-id="bookId"
-            :chapters="overview.chapters"
-            :bible-ready="overview.bible_ready"
-            @changed="onPanelChanged"
-            @open-reviews="openReviews"
-          />
+          <section
+            v-else-if="tab === 'script' && panelStage('script') !== 'ready'"
+            class="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-dashed border-ink-700 bg-ink-900/30 px-8 text-center"
+          >
+            <NSpin v-if="panelStage('script') === 'running'" size="small" class="mb-4" />
+            <h2 class="font-display text-xl text-fog-200">{{ panelStageMessage('script').title }}</h2>
+            <p class="mt-2 max-w-md text-[11px] leading-6 text-fog-500">{{ panelStageMessage('script').detail }}</p>
+          </section>
 
           <ScriptPanel
             v-else-if="tab === 'script'"
             v-model:chapter-id="scriptChapterId"
             :book-id="bookId"
             :chapters="overview.chapters"
+            :focus-unit-id="scriptFocusUnitId"
+            :auto-script-running="panelStage('script') === 'running'"
+            :auto-production-active="autoProductionActive"
+            :auto-script-stage="panelStage('script')"
             @changed="onPanelChanged"
             @open-reviews="openReviews"
-            @open-scenes="setTab('scenes')"
           />
 
-          <CastingPanel
+          <section
+            v-else-if="tab === 'casting' && panelStage('casting') !== 'ready'"
+            class="flex min-h-[320px] flex-col items-center justify-center rounded-xl border border-dashed border-ink-700 bg-ink-900/30 px-8 text-center"
+          >
+            <NSpin v-if="panelStage('casting') === 'running'" size="small" class="mb-4" />
+            <h2 class="font-display text-xl text-fog-200">{{ panelStageMessage('casting').title }}</h2>
+            <p class="mt-2 max-w-md text-[11px] leading-6 text-fog-500">{{ panelStageMessage('casting').detail }}</p>
+          </section>
+
+          <CharactersPanel
             v-else-if="tab === 'casting'"
             :book-id="bookId"
             :bible-ready="overview.bible_ready"
+            :focus-character-id="characterFocusId"
             @changed="onPanelChanged"
-            @open-reviews="openReviews"
           />
 
           <ReviewInbox
             v-else-if="tab === 'reviews'"
             :book-id="bookId"
+            v-model:chapter-filter="reviewChapterId"
+            :chapters="overview.chapters"
             heading="本书异常收件箱"
-            hint="设定集、分场、剧本与选角中需要你判断的节点都会汇总到这里。"
+            hint="只汇总 AI 无法自动处理、确实需要你判断的内容问题；系统故障在任务状态中显示。"
             @changed="onPanelChanged"
+            @open-location="openLocation"
           />
         </template>
       </div>

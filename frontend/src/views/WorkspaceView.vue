@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   NAlert,
   NButton,
@@ -24,6 +24,7 @@ import { useAnalysisStore } from '@/stores/analysis'
 import { useSystemStore } from '@/stores/system'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { errorMessage } from '@/utils/errors'
+import { chapterDisplayTitle } from '@/utils/production'
 import {
   formatDateTime,
   formatNumber,
@@ -32,6 +33,7 @@ import {
 } from '@/utils/format'
 
 const props = defineProps<{ bookId: string }>()
+const route = useRoute()
 
 const store = useWorkspaceStore()
 const analysis = useAnalysisStore()
@@ -69,7 +71,7 @@ const filteredChapters = computed(() => {
 
 const chapterOptions = computed(() =>
   store.chapters.map((chapter) => ({
-    label: `${pad(chapter.sequence)} · ${chapter.title}`,
+    label: chapterDisplayTitle(chapter.sequence, chapter.title),
     value: chapter.id,
   })),
 )
@@ -414,7 +416,10 @@ watch(
     activeTab.value = 'text'
     analysis.reset()
     if (bookId) {
-      await store.loadBook(bookId)
+      const preferredChapterId = typeof route.query.chapter === 'string'
+        ? route.query.chapter
+        : undefined
+      await store.loadBook(bookId, preferredChapterId)
       if (store.book?.id === bookId) {
         await Promise.allSettled([
           analysis.loadStatus(bookId),

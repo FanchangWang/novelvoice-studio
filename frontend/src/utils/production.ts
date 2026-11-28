@@ -1,11 +1,11 @@
 /** v0.5.0 制作台使用的状态与标签。 */
 
-export type ProductionTab = 'plan' | 'bible' | 'scenes' | 'script' | 'casting' | 'reviews'
+export type ProductionTab = 'overview' | 'chapters' | 'script' | 'casting' | 'reviews'
 
 export const PRODUCTION_STATUS_LABELS: Record<string, string> = {
   not_started: '未开始',
-  analyzing: '设定集分析中',
-  scripting: '分场 / 剧本生成中',
+  analyzing: '全书分析中',
+  scripting: '剧本生成中',
   casting: '选角中',
   needs_review: '待处理异常',
   ready: '可以生成音频',
@@ -61,6 +61,17 @@ export function audioStatusTagType(status: string): TagType {
   return 'default'
 }
 
+export const CHAPTER_KIND_LABELS: Record<string, string> = {
+  story: '正文',
+  extra: '番外',
+  author_note: '请假单 / 作者说明',
+  unclassified: '未分类',
+}
+
+export const CHAPTER_KIND_OPTIONS = Object.entries(CHAPTER_KIND_LABELS).map(
+  ([value, label]) => ({ value, label }),
+)
+
 export const ROLE_TIER_LABELS: Record<string, string> = {
   protagonist: '主角',
   major: '重要配角',
@@ -107,9 +118,11 @@ export const SCRIPT_VERSION_STATUS_LABELS: Record<string, string> = {
 }
 
 export const JOB_TYPE_LABELS: Record<string, string> = {
+  auto_production: '一键自动制作',
+  production_batch: '批量生成剧本',
   chapter_analysis: '章节分析',
-  book_bible: '全书设定集',
-  chapter_scenes: '本章分场',
+  book_bible: '全书分析',
+  chapter_scenes: '本章分析',
   chapter_script: '本章剧本',
   book_casting: '自动选角',
   segment_audio: '单元音频',
@@ -148,6 +161,15 @@ export const REVIEW_STATUS_LABELS: Record<string, string> = {
   open: '待处理',
   resolved: '已接受',
   ignored: '已忽略',
+}
+
+export function chapterDisplayTitle(sequence: number, title: string): string {
+  const cleaned = (title || '').trim()
+  if (!cleaned) return String(sequence).padStart(2, '0')
+  if (/^(?:第\s*[零一二三四五六七八九十百千万\d]+\s*[卷章节回部篇]|[零一二三四五六七八九十百千万\d]+\s*[、.．、:：-])/.test(cleaned)) {
+    return cleaned
+  }
+  return `${String(sequence).padStart(2, '0')} · ${cleaned}`
 }
 
 export function jobTypeLabel(value: string | null | undefined): string {

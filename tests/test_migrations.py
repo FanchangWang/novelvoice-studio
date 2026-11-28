@@ -37,6 +37,7 @@ def test_migrations_create_all_tables(settings: Settings) -> None:
         "voice_actors",
         "voice_casts",
         "review_items",
+        "book_id_sequences",
     }
     assert expected.issubset(tables)
     assert revision is not None
@@ -46,6 +47,26 @@ def test_migrations_create_all_tables(settings: Settings) -> None:
 def test_migrations_are_idempotent(settings: Settings) -> None:
     assert run_migrations(settings, backup=False) is None
     assert current_revision(settings.db_path) is not None
+
+
+def test_product_flow_columns_and_sequence(settings: Settings) -> None:
+    with sqlite3.connect(settings.db_path) as connection:
+        chapter_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info('chapters')")
+        }
+        actor_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info('voice_actors')")
+        }
+        review_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info('review_items')")
+        }
+        sequence = connection.execute(
+            "SELECT next_value FROM book_id_sequences WHERE id = 1"
+        ).fetchone()
+    assert "classification_status" in chapter_columns
+    assert "scope" in actor_columns
+    assert "category" in review_columns
+    assert sequence is not None and sequence[0] >= 1
 
 
 def test_segment_evidence_column_exists(settings: Settings) -> None:

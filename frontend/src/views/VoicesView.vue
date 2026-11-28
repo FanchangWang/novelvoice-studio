@@ -67,8 +67,9 @@ async function openWorkspace(): Promise<void> {
     return
   }
   await router.push({
-    name: 'workspace',
+    name: 'production',
     params: { bookId: activeBookId.value },
+    query: { tab: 'script' },
   })
 }
 

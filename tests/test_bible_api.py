@@ -10,6 +10,8 @@ from novelvoice_studio.ai.base import (
     BibleArcDraft,
     BibleChapterResult,
     BibleCharacterDraft,
+    BibleMergeCharacterDraft,
+    BibleMergeResult,
     BibleTimelineDraft,
     AliasDraft,
     EvidenceDraft,
@@ -17,7 +19,13 @@ from novelvoice_studio.ai.base import (
 )
 from novelvoice_studio.models import BookBible, Character, GenerationJob
 from novelvoice_studio.services.analysis import recover_interrupted_analysis
-from novelvoice_studio.services.bible import BibleService
+from novelvoice_studio.services.bible import (
+    BibleService,
+    _ChapterSource,
+    _Window,
+    _specific_name_from_draft,
+)
+from novelvoice_studio.services.chapters import split_paragraphs
 
 
 def _import_sample(upload, sample_text: str, title: str = "角色圣经测试") -> str:
@@ -74,9 +82,9 @@ def test_book_bible_mock_pipeline(
     assert bible["is_active"] is True
     assert bible["version"] == 1
     assert bible["status"] == status["bible_status"]
-    assert bible["stats"]["chapters"] == 4
-    assert bible["stats"]["windows"] >= 4
-    assert "全书共 4 章" in bible["summary"]
+    assert bible["stats"]["chapters"] == 3
+    assert bible["stats"]["windows"] >= 3
+    assert "全书共 3 章" in bible["summary"]
     names = {item["canonical_name"] for item in bible["characters"]}
     assert {"林见秋", "沈砚", "阿棠"} <= names
     for character in bible["characters"]:
@@ -91,9 +99,9 @@ def test_book_bible_mock_pipeline(
             "unknown",
         }
     assert bible["timeline"]["narrative_mode"] == "nonlinear"
-    assert len(bible["timeline"]["chapters"]) == 4
+    assert len(bible["timeline"]["chapters"]) == 3
     orders = [item["story_order"] for item in bible["timeline"]["chapters"]]
-    assert orders == list(range(1, 5))
+    assert orders == list(range(1, 4))
 
     books = client.get("/api/v1/books").json()["items"]
     current = next(item for item in books if item["id"] == book_id)
@@ -125,21 +133,21 @@ def test_book_bible_chapter_failure_is_isolated_and_resumable(
     status = _wait_bible(client, book_id)
     assert status["job"]["status"] == "completed"
     assert status["job"]["failed_items"] == 1
-    assert status["job"]["completed_items"] == 4
+    assert status["job"]["completed_items"] == 3
     assert status["bible_status"] == "needs_review"
 
     state["fail"] = False
     response = client.post(f"/api/v1/books/{book_id}/bible/analysis")
     assert response.status_code == 202
     job = response.json()
-    assert job["total_items"] == 4
-    assert job["completed_items"] == 3
+    assert job["total_items"] == 3
+    assert job["completed_items"] == 2
     assert job["params"]["resume_mode"] is True
     assert len(job["params"]["chapter_ids"]) == 1
 
     final = _wait_bible(client, book_id)
     assert final["job"]["status"] == "completed"
-    assert final["job"]["completed_items"] == 4
+    assert final["job"]["completed_items"] == 3
 
 
 def test_book_bible_rerun_versions_and_lock(
@@ -213,7 +221,7 @@ def test_book_bible_selected_chapter_rerun(
     _wait_bible(client, book_id)
 
     chapters = client.get(f"/api/v1/books/{book_id}/chapters").json()["items"]
-    target = chapters[1]
+    target = next(item for item in chapters if item["analysis_included"])
     registry = app.state.registry
     extracted: list[int] = []
     original = registry.llm.extract_bible_characters
@@ -241,10 +249,10 @@ def test_book_bible_selected_chapter_rerun(
     state = client.get(f"/api/v1/books/{book_id}/bible").json()
     bible = state["bible"]
     assert bible["version"] == 2
-    assert bible["stats"]["chapters"] == 4
+    assert bible["stats"]["chapters"] == 3
     assert bible["stats"]["analyzed_chapters"] == 1
-    assert bible["stats"]["reused_chapters"] == 3
-    assert len(bible["timeline"]["chapters"]) == 4
+    assert bible["stats"]["reused_chapters"] == 2
+    assert len(bible["timeline"]["chapters"]) == 3
     names = {item["canonical_name"] for item in bible["characters"]}
     assert {"林见秋", "沈砚", "阿棠"} <= names
 
@@ -257,11 +265,11 @@ def test_book_bible_selected_chapter_rerun(
         assert rows[0].status == "superseded"
         assert rows[1].is_active is True
         content = rows[1].content_json
-        assert len(content["chapter_timelines"]) == 4
+        assert len(content["chapter_timelines"]) == 3
         assert content["base_bible_id"] == rows[0].id
         assert {
             row["chapter_id"] for row in content["chapter_timelines"]
-        } == {chapter["id"] for chapter in chapters}
+        } == {chapter["id"] for chapter in chapters if chapter["analysis_included"]}
 
 
 def test_book_bible_selected_rerun_requires_base(
@@ -269,9 +277,10 @@ def test_book_bible_selected_rerun_requires_base(
 ) -> None:
     book_id = _import_sample(upload, sample_text)
     chapters = client.get(f"/api/v1/books/{book_id}/chapters").json()["items"]
+    chapter_id = next(item["id"] for item in chapters if item["analysis_included"])
     response = client.post(
         f"/api/v1/books/{book_id}/bible/analysis",
-        json={"chapter_ids": [chapters[0]["id"]]},
+        json={"chapter_ids": [chapter_id]},
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "bible_base_missing"
@@ -290,20 +299,26 @@ def test_book_bible_multiple_arcs_by_age_stage(
 
     def fake_extract(self, text, known_characters, context=None):
         sequence = int((context or {}).get("chapter_sequence") or 0)
-        stage = "child" if sequence <= 2 else "elderly"
+        flashback = sequence == 3
+        stage = "child" if flashback else "elderly"
         return BibleChapterResult(
             characters=[
                 BibleCharacterDraft(
                     name="林见秋",
                     age_range=stage,
-                    arc_note="幼年时期" if stage == "child" else "晚年时期",
+                    arc_note="回忆中的幼年时期" if flashback else "晚年时期",
                     confidence=0.8,
                     role_tier="protagonist",
+                    evidence=[
+                        EvidenceDraft(
+                            quote="林见秋想起小时候" if flashback else "林见秋已经年老"
+                        )
+                    ],
                 )
             ],
             timeline=BibleTimelineDraft(
                 story_time_label=f"第{sequence}章时间",
-                time_mode="present",
+                time_mode="flashback" if flashback else "present",
                 confidence=0.7,
             ),
             meta={"mock": True, "prompt_version": "test"},
@@ -340,6 +355,185 @@ def test_book_bible_multiple_arcs_by_age_stage(
         assert first["chapter_start_id"] is not None
         assert second["chapter_start_id"] is not None
         assert first["id"] != second["id"]
+    finally:
+        registry.llm.extract_bible_characters = original_extract
+        registry.llm.merge_bible_candidates = original_merge
+
+
+def test_book_bible_continuous_days_do_not_create_age_stages(
+    client: TestClient,
+    upload,
+    sample_text: str,
+    app,
+) -> None:
+    book_id = _import_sample(upload, sample_text)
+    registry = app.state.registry
+    original_extract = registry.llm.extract_bible_characters
+    original_merge = registry.llm.merge_bible_candidates
+
+    def fake_extract(self, text, known_characters, context=None):
+        sequence = int((context or {}).get("chapter_sequence") or 0)
+        stage = "adult" if sequence == 3 else "young_adult"
+        return BibleChapterResult(
+            characters=[
+                BibleCharacterDraft(
+                    name="林见秋",
+                    age_range=stage,
+                    arc_note="事件发起" if sequence == 3 else "日常状态",
+                    confidence=0.8,
+                    role_tier="protagonist",
+                    evidence=[EvidenceDraft(quote="林见秋推门进来")],
+                )
+            ],
+            timeline=BibleTimelineDraft(
+                story_time_label={1: "第一天午后", 2: "第二天傍晚", 3: "第四天一早"}.get(
+                    sequence, "当天"
+                ),
+                time_mode="present",
+                confidence=0.7,
+            ),
+            meta={"mock": True, "prompt_version": "test"},
+        )
+
+    def fake_merge(self, candidates, context=None):
+        from novelvoice_studio.ai.base import BibleMergeResult
+
+        return BibleMergeResult(
+            characters=[
+                BibleMergeCharacterDraft(
+                    name="林见秋",
+                    role_tier="protagonist",
+                    arcs=[
+                        BibleArcDraft(
+                            label="日常状态",
+                            age_stage="young_adult",
+                            chapter_start=1,
+                            chapter_end=2,
+                            age_stage_explicit=False,
+                            confidence=0.8,
+                        ),
+                        BibleArcDraft(
+                            label="事件发起",
+                            age_stage="adult",
+                            chapter_start=3,
+                            chapter_end=3,
+                            age_stage_explicit=True,
+                            age_stage_evidence=["并不存在的成年证据"],
+                            confidence=0.8,
+                        ),
+                    ],
+                    confidence=0.8,
+                )
+            ],
+            summary="四天连续故事",
+            meta={"mock": True},
+        )
+
+    registry.llm.extract_bible_characters = MethodType(fake_extract, registry.llm)
+    registry.llm.merge_bible_candidates = MethodType(fake_merge, registry.llm)
+    try:
+        response = client.post(f"/api/v1/books/{book_id}/bible/analysis")
+        assert response.status_code == 202
+        status = _wait_bible(client, book_id)
+        assert status["job"]["status"] == "completed"
+        state = client.get(f"/api/v1/books/{book_id}/bible").json()
+        character = next(
+            item
+            for item in state["bible"]["characters"]
+            if item["canonical_name"] == "林见秋"
+        )
+        assert len(character["arcs"]) == 2
+        assert {arc["label"] for arc in character["arcs"]} == {"日常状态", "事件发起"}
+        assert {arc["age_stage"] for arc in character["arcs"]} == {"young_adult"}
+    finally:
+        registry.llm.extract_bible_characters = original_extract
+        registry.llm.merge_bible_candidates = original_merge
+
+
+def test_book_bible_explicit_aging_keeps_real_age_stages(
+    client: TestClient,
+    upload,
+    sample_text: str,
+    app,
+) -> None:
+    book_id = _import_sample(upload, sample_text)
+    registry = app.state.registry
+    original_extract = registry.llm.extract_bible_characters
+    original_merge = registry.llm.merge_bible_candidates
+
+    def fake_extract(self, text, known_characters, context=None):
+        sequence = int((context or {}).get("chapter_sequence") or 0)
+        adult = sequence == 3
+        return BibleChapterResult(
+            characters=[
+                BibleCharacterDraft(
+                    name="林见秋",
+                    age_range="adult" if adult else "child",
+                    arc_note="多年后" if adult else "幼年时期",
+                    confidence=0.8,
+                    role_tier="protagonist",
+                    evidence=[
+                        EvidenceDraft(
+                            quote="多年后林见秋已经成年" if adult else "林见秋还是孩子"
+                        )
+                    ],
+                )
+            ],
+            timeline=BibleTimelineDraft(
+                story_time_label="多年后" if adult else "幼年",
+                time_mode="present",
+                confidence=0.7,
+            ),
+            meta={"mock": True, "prompt_version": "test"},
+        )
+
+    def fake_merge(self, candidates, context=None):
+        return BibleMergeResult(
+            characters=[
+                BibleMergeCharacterDraft(
+                    name="林见秋",
+                    role_tier="protagonist",
+                    arcs=[
+                        BibleArcDraft(
+                            label="幼年",
+                            age_stage="child",
+                            chapter_start=1,
+                            chapter_end=2,
+                            age_stage_explicit=True,
+                            age_stage_evidence=["林见秋还是孩子"],
+                            confidence=0.8,
+                        ),
+                        BibleArcDraft(
+                            label="成年",
+                            age_stage="adult",
+                            chapter_start=3,
+                            chapter_end=3,
+                            age_stage_explicit=True,
+                            age_stage_evidence=["多年后林见秋已经成年"],
+                            confidence=0.8,
+                        ),
+                    ],
+                    confidence=0.8,
+                )
+            ],
+            summary="真实年龄成长",
+            meta={"mock": True},
+        )
+
+    registry.llm.extract_bible_characters = MethodType(fake_extract, registry.llm)
+    registry.llm.merge_bible_candidates = MethodType(fake_merge, registry.llm)
+    try:
+        response = client.post(f"/api/v1/books/{book_id}/bible/analysis")
+        assert response.status_code == 202
+        status = _wait_bible(client, book_id)
+        assert status["job"]["status"] == "completed"
+        state = client.get(f"/api/v1/books/{book_id}/bible").json()
+        character = next(
+            item
+            for item in state["bible"]["characters"]
+            if item["canonical_name"] == "林见秋"
+        )
+        assert {arc["age_stage"] for arc in character["arcs"]} == {"child", "adult"}, character["arcs"]
     finally:
         registry.llm.extract_bible_characters = original_extract
         registry.llm.merge_bible_candidates = original_merge
@@ -504,7 +698,7 @@ def test_book_bible_windows_and_alias_conflict(
 
     def fake_extract(self, text, known_characters, context=None):
         sequence = int((context or {}).get("chapter_sequence") or 0)
-        if sequence == 1:
+        if "第一章" in str((context or {}).get("chapter_title") or ""):
             characters = [
                 BibleCharacterDraft(
                     name="沈砚",
@@ -538,7 +732,7 @@ def test_book_bible_windows_and_alias_conflict(
         else:
             characters = []
         relationships = []
-        if sequence == 1:
+        if "第一章" in str((context or {}).get("chapter_title") or ""):
             relationships = [
                 RelationshipDraft(
                     source_name="沈砚",
@@ -609,3 +803,73 @@ def test_book_bible_windows_and_alias_conflict(
     finally:
         registry.llm.extract_bible_characters = original
         registry.llm.merge_bible_candidates = original_merge
+
+def test_contextual_honorifics_resolve_to_specific_character() -> None:
+    from novelvoice_studio.ai.prompts import BIBLE_PROMPT_VERSION
+
+    service = object.__new__(BibleService)
+    chapter = _ChapterSource(
+        id="ch_test", title="第一章", sequence=1, start=0, end=1,
+        text="正文", paragraphs=[], summary=None,
+    )
+    first = BibleChapterResult(
+        characters=[BibleCharacterDraft(
+            name="宜妃",
+            aliases=[
+                AliasDraft(name="宜妃娘娘", confidence=0.95, basis="explicit"),
+                AliasDraft(name="娘娘", confidence=0.99, basis="explicit"),
+            ],
+            confidence=0.9,
+        )],
+        relationships=[], timeline=BibleTimelineDraft(confidence=0.7),
+    )
+    second = BibleChapterResult(
+        characters=[
+            BibleCharacterDraft(
+                name="娘娘",
+                aliases=[
+                    AliasDraft(name="宜妃", confidence=0.95, basis="explicit"),
+                    AliasDraft(name="娘娘", confidence=0.99, basis="explicit"),
+                ],
+                confidence=0.9,
+            ),
+            BibleCharacterDraft(name="娘娘", confidence=0.99),
+            BibleCharacterDraft(name="殿下", confidence=0.99),
+        ],
+        relationships=[], timeline=BibleTimelineDraft(confidence=0.7),
+    )
+
+    observations, relationships, _timeline = service._merge_chapter_result(
+        chapter, [first, second]
+    )
+
+    assert BIBLE_PROMPT_VERSION == "v050.p2.bible.v5"
+    assert [item.draft.name for item in observations] == ["宜妃"]
+    assert [alias.name for alias in observations[0].draft.aliases] == ["宜妃娘娘"]
+    assert relationships == []
+    assert _specific_name_from_draft(BibleCharacterDraft(name="姨娘")) is None
+
+
+def test_character_extraction_window_keeps_context_before_and_after() -> None:
+    text = (
+        "皇上问：“宜妃娘娘现在怎么样了？”\n"
+        + "庭院里一时无人说话。" * 18
+        + "\n宫女答道：“娘娘已经睡了。”"
+    )
+    chapter = _ChapterSource(
+        id="ch_context", title="第一章", sequence=1, start=0, end=len(text),
+        text=text, paragraphs=split_paragraphs(text, 0, len(text)), summary=None,
+    )
+    service = object.__new__(BibleService)
+    service.window_chars = 180
+    windows = service._windows(chapter)
+    assert len(windows) > 1
+
+    target = next(window for window in windows if "宫女答道" in window.text)
+    context_text = service._extraction_window_text(chapter, target)
+
+    assert "【前文，仅供消歧】" in context_text
+    assert "宜妃娘娘" in context_text
+    assert "【当前分析窗口" in context_text
+    assert "宫女答道" in context_text
+    assert target.start <= text.index("宫女答道")

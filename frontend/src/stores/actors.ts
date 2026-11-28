@@ -13,6 +13,8 @@ export interface ActorQuery {
   q?: string
   favorite?: boolean
   status?: string
+  scope?: 'general' | 'book'
+  bookId?: string
   limit?: number
   offset?: number
 }
@@ -39,6 +41,8 @@ export const useActorStore = defineStore('actors', () => {
         q: next.q?.trim() || undefined,
         favorite: next.favorite,
         status: next.status,
+        scope: next.scope,
+        bookId: next.bookId,
         limit: next.limit ?? 100,
         offset: next.offset ?? 0,
       })

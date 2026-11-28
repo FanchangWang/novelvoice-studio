@@ -7,27 +7,25 @@ import { errorMessage } from '@/utils/errors'
 
 export const useLibraryStore = defineStore('library', () => {
   const books = ref<BookSummary[]>([])
-  const includeDeleted = ref(false)
+  const deletedBooks = ref<BookSummary[]>([])
   const loading = ref(false)
+  const trashLoading = ref(false)
   const error = ref<string | null>(null)
 
   const total = computed(() => books.value.length)
+  const trashTotal = computed(() => deletedBooks.value.length)
   const totalChapters = computed(() =>
-    books.value
-      .filter((book) => book.status !== 'deleted')
-      .reduce((sum, book) => sum + book.chapter_count, 0),
+    books.value.reduce((sum, book) => sum + book.chapter_count, 0),
   )
   const totalCharacters = computed(() =>
-    books.value
-      .filter((book) => book.status !== 'deleted')
-      .reduce((sum, book) => sum + book.source_char_count, 0),
+    books.value.reduce((sum, book) => sum + book.source_char_count, 0),
   )
 
   async function fetchBooks(): Promise<void> {
     loading.value = true
     error.value = null
     try {
-      const response = await api.listBooks(includeDeleted.value)
+      const response = await api.listBooks()
       books.value = response.items
     } catch (err) {
       error.value = errorMessage(err)
@@ -36,32 +34,53 @@ export const useLibraryStore = defineStore('library', () => {
     }
   }
 
-  async function setIncludeDeleted(value: boolean): Promise<void> {
-    includeDeleted.value = value
-    await fetchBooks()
+  async function fetchTrash(): Promise<void> {
+    trashLoading.value = true
+    error.value = null
+    try {
+      const response = await api.listBooks(false, true)
+      deletedBooks.value = response.items
+    } catch (err) {
+      error.value = errorMessage(err)
+    } finally {
+      trashLoading.value = false
+    }
+  }
+
+  async function refreshAll(): Promise<void> {
+    await Promise.all([fetchBooks(), fetchTrash()])
   }
 
   async function removeBook(bookId: string): Promise<void> {
     await api.deleteBook(bookId)
-    await fetchBooks()
+    await refreshAll()
   }
 
   async function restoreBook(bookId: string): Promise<void> {
     await api.restoreBook(bookId)
-    await fetchBooks()
+    await refreshAll()
+  }
+
+  async function permanentDeleteBook(bookId: string): Promise<void> {
+    await api.permanentlyDeleteBook(bookId)
+    await refreshAll()
   }
 
   return {
     books,
-    includeDeleted,
+    deletedBooks,
     loading,
+    trashLoading,
     error,
     total,
+    trashTotal,
     totalChapters,
     totalCharacters,
     fetchBooks,
-    setIncludeDeleted,
+    fetchTrash,
+    refreshAll,
     removeBook,
     restoreBook,
+    permanentDeleteBook,
   }
 })

@@ -38,6 +38,15 @@ describe('api client', () => {
     expect((init?.headers as Headers).get('Accept')).toBe('application/json')
   })
 
+  it('queries only deleted books for the recycle bin', async () => {
+    installFetch()
+    fetchMock.mockResolvedValue(fakeResponse({ items: [], total: 0 }))
+
+    await api.listBooks(false, true)
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/v1/books?deleted_only=true')
+  })
+
   it('maps the unified backend error payload to ApiError', async () => {
     installFetch()
     const payload: ApiErrorPayload = {

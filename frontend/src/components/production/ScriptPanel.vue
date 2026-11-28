@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   NAlert,
   NButton,
@@ -11,11 +11,15 @@ import {
 
 import { api } from '@/api/client'
 import type {
+  CharacterOut,
   ProductionChapterOut,
+  SceneStateResponse,
+  ScriptReviewItemOut,
   ScriptStateResponse,
   ScriptUnitOut,
   ScriptVersionOut,
 } from '@/api/types'
+import ChapterPlaylist from '@/components/production/ChapterPlaylist.vue'
 import UnitAudioVersionsModal from '@/components/production/UnitAudioVersionsModal.vue'
 import { useProductionStore } from '@/stores/production'
 import {
@@ -37,6 +41,7 @@ import {
   STAGE_STATUS_LABELS,
   UNIT_TYPE_LABELS,
   audioStatusTagType,
+  chapterDisplayTitle,
   jobStatusLabel,
   jobTypeLabel,
   severityTagType,
@@ -47,20 +52,26 @@ const props = defineProps<{
   bookId: string
   chapters: ProductionChapterOut[]
   chapterId: string | null
+  focusUnitId?: string | null
+  autoScriptRunning?: boolean
+  autoProductionActive?: boolean
+  autoScriptStage?: string
 }>()
 
 const emit = defineEmits<{
-  (event: 'update:chapterId', value: string): void
+  (event: 'update:chapterId', value: string | null): void
   (event: 'changed'): void
-  (event: 'open-reviews'): void
-  (event: 'open-scenes'): void
+  (event: 'open-reviews', chapterId: string): void
 }>()
 
 const production = useProductionStore()
 const message = useMessage()
 
 const state = ref<ScriptStateResponse | null>(null)
+const scenes = ref<SceneStateResponse | null>(null)
 const versions = ref<ScriptVersionOut[]>([])
+const characters = ref<CharacterOut[]>([])
+const charactersBookId = ref<string | null>(null)
 const loading = ref(false)
 const actionLoading = ref(false)
 const error = ref<string | null>(null)
@@ -75,6 +86,7 @@ const showVersions = ref(false)
 const audioActionUnitId = ref<string | null>(null)
 const showAudioVersions = ref(false)
 const versionUnit = ref<ScriptUnitOut | null>(null)
+const speakerActionUnitId = ref<string | null>(null)
 
 const TTS_TYPES = new Set(['narration', 'dialogue', 'inner_monologue'])
 
@@ -82,28 +94,72 @@ let pollTimer: ReturnType<typeof setTimeout> | null = null
 let lastJobActive = false
 let loadToken = 0
 
+const includedChapters = computed(() =>
+  props.chapters.filter((chapter) => chapter.analysis_included),
+)
 const chapterOptions = computed(() =>
-  props.chapters.map((chapter) => ({
-    label: `${String(chapter.sequence).padStart(2, '0')} · ${chapter.title} · ${
+  includedChapters.value.map((chapter) => ({
+    label: `${chapterDisplayTitle(chapter.sequence, chapter.title)} · ${
       STAGE_STATUS_LABELS[chapter.script_status] ?? chapter.script_status
     }`,
     value: chapter.id,
   })),
 )
 const selectedChapter = computed(
-  () => props.chapters.find((chapter) => chapter.id === props.chapterId) ?? null,
+  () => includedChapters.value.find((chapter) => chapter.id === props.chapterId) ?? null,
 )
 const job = computed(() => state.value?.job ?? null)
 const jobActive = computed(() => isJobActive(job.value?.status))
+const autoProductionActive = computed(() => Boolean(props.autoProductionActive || props.autoScriptRunning))
+const waitingForAuto = computed(() => jobActive.value || (autoProductionActive.value && !units.value.length))
+const needsSceneRetry = computed(() => !selectedChapter.value?.scene_count)
+const generateLabel = computed(() => {
+  if (jobActive.value) return '正在生成剧本'
+  if (autoProductionActive.value) return units.value.length ? '自动制作进行中' : '等待自动生成'
+  if (units.value.length) return '重新生成剧本'
+  return needsSceneRetry.value ? '重新分析并生成剧本' : '生成本章剧本'
+})
 const units = computed(() => state.value?.units ?? [])
 const activeVersion = computed(() => state.value?.version ?? null)
+const reviewItems = computed(() => state.value?.review_items ?? [])
+const actionableReviewCount = computed(() => reviewItems.value.length)
+const needsReviewUnitIds = computed(() => new Set(
+  reviewItems.value.flatMap((item) => {
+    if (item.entity_type === 'script_unit' && item.entity_id) return [item.entity_id]
+    const rows = Array.isArray(item.payload.units) ? item.payload.units : []
+    return rows.flatMap((row) => {
+      if (!row || typeof row !== 'object') return []
+      const index = (row as Record<string, unknown>).unit_index
+      const unit = units.value.find((candidate) => candidate.unit_index === index)
+      return unit ? [unit.id] : []
+    })
+  }),
+))
+const needsReview = computed(() => state.value?.script_status === 'needs_review')
+const speakerOptions = computed(() => [
+  { label: '旁白', value: 'narrator' },
+  ...characters.value
+    .filter((character) => !character.merged_into_id)
+    .map((character) => ({ label: character.canonical_name, value: character.id })),
+  { label: '仍未知', value: 'unknown' },
+])
+
+function selectedSpeakerValue(unit: ScriptUnitOut): string {
+  if (unit.speaker_type === 'character' && unit.speaker_id) return unit.speaker_id
+  if (unit.speaker_type === 'narrator') return 'narrator'
+  return 'unknown'
+}
+
+function openChapterReviews(): void {
+  emit('open-reviews', props.chapterId ?? '')
+}
 
 const filteredUnits = computed(() => {
   if (filter.value === 'all') {
     return units.value
   }
   if (filter.value === 'needs_review') {
-    return units.value.filter((unit) => unit.review_status === 'needs_review')
+    return units.value.filter((unit) => needsReviewUnitIds.value.has(unit.id))
   }
   if (filter.value === 'audio_pending') {
     return units.value.filter(
@@ -143,7 +199,7 @@ const pendingAudioCount = computed(
 
 const filterOptions: Array<{ label: string; value: ScriptFilter }> = [
   { label: '全部单元', value: 'all' },
-  { label: '待审核', value: 'needs_review' },
+  { label: '内容问题行', value: 'needs_review' },
   { label: '待生成音频', value: 'audio_pending' },
   { label: '对白', value: 'dialogue' },
   { label: '旁白', value: 'narration' },
@@ -169,8 +225,12 @@ function schedulePoll(): void {
 
 async function load(silent = false): Promise<void> {
   const chapterId = props.chapterId
-  if (!chapterId) {
+  if (!chapterId || !selectedChapter.value) {
+    loadToken += 1
+    stopPolling()
+    lastJobActive = false
     state.value = null
+    scenes.value = null
     versions.value = []
     return
   }
@@ -180,15 +240,26 @@ async function load(silent = false): Promise<void> {
   }
   error.value = null
   try {
-    const [response, versionResponse] = await Promise.all([
+    const characterRequest =
+      charactersBookId.value === props.bookId
+        ? Promise.resolve(null)
+        : api.listCharacters(props.bookId)
+    const [response, versionResponse, sceneResponse, characterResponse] = await Promise.all([
       api.getScript(chapterId),
       api.listScriptVersions(chapterId),
+      api.getScenes(chapterId),
+      characterRequest,
     ])
     if (token !== loadToken) {
       return
     }
     state.value = response
+    scenes.value = sceneResponse
     versions.value = versionResponse.items
+    if (characterResponse) {
+      characters.value = characterResponse.items
+      charactersBookId.value = props.bookId
+    }
     const active = isJobActive(response.job?.status)
     if (active) {
       schedulePoll()
@@ -216,14 +287,14 @@ async function load(silent = false): Promise<void> {
 
 async function start(): Promise<void> {
   const chapterId = props.chapterId
-  if (!chapterId) {
+  if (!chapterId || !selectedChapter.value) {
     return
   }
   actionLoading.value = true
   error.value = null
   try {
-    await api.startScript(chapterId)
-    message.success('已开始生成有声剧本')
+    await api.startScript(chapterId, needsSceneRetry.value)
+    message.success(needsSceneRetry.value ? '已开始重新分析本章并生成剧本' : '已开始生成有声剧本')
     await load(true)
     await production.refresh()
   } catch (err) {
@@ -277,7 +348,7 @@ function unitText(unit: ScriptUnitOut): string {
 }
 
 function unitTone(unit: ScriptUnitOut): string {
-  if (unit.review_status === 'needs_review') {
+  if (needsReviewUnitIds.value.has(unit.id)) {
     return 'border-brass-600/35 bg-brass-500/[0.04]'
   }
   if (unit.unit_type === 'dialogue') {
@@ -366,27 +437,79 @@ async function handleAudioVersionsChanged(): Promise<void> {
   emit('changed')
 }
 
+async function updateSpeaker(unit: ScriptUnitOut, value: string): Promise<void> {
+  speakerActionUnitId.value = unit.id
+  try {
+    const character = value !== 'narrator' && value !== 'unknown'
+    await api.updateScriptUnitSpeaker(
+      unit.id,
+      character ? 'character' : (value as 'narrator' | 'unknown'),
+      character ? value : null,
+    )
+    message.success('说话人已确认，相关音频已标记为需要重新生成')
+    await load(true)
+    await production.refresh()
+    emit('changed')
+  } catch (err) {
+    message.error(errorMessage(err))
+  } finally {
+    speakerActionUnitId.value = null
+  }
+}
+
+async function focusUnit(unitId: string): Promise<void> {
+  filter.value = 'all'
+  await nextTick()
+  document.getElementById(`script-unit-${unitId}`)?.scrollIntoView({
+    behavior: 'smooth',
+    block: 'center',
+  })
+}
+
+function focusReview(item: ScriptReviewItemOut): void {
+  const first = (item.payload.units as Array<Record<string, unknown>> | undefined)?.[0]
+  const index = first?.unit_index
+  const unit = units.value.find((candidate) => candidate.unit_index === index)
+  if (unit) {
+    void focusUnit(unit.id)
+  } else {
+    message.info('该问题没有对应到具体剧本行，请从异常收件箱查看原文证据。')
+  }
+}
+
+watch(
+  () => [props.focusUnitId, units.value],
+  () => {
+    if (props.focusUnitId) void focusUnit(props.focusUnitId)
+  },
+)
+
+watch(
+  () => [props.chapterId, includedChapters.value.map((chapter) => chapter.id)] as const,
+  ([chapterId, includedIds]) => {
+    if (chapterId !== null && includedIds.includes(chapterId)) {
+      return
+    }
+    const nextChapterId = includedIds[0] ?? null
+    if (nextChapterId !== chapterId) {
+      emit('update:chapterId', nextChapterId)
+    }
+  },
+  { immediate: true },
+)
+
 watch(
   () => props.chapterId,
   () => {
     stopPolling()
     lastJobActive = false
     state.value = null
+    scenes.value = null
     versions.value = []
     if (props.chapterId) {
       void load().catch(() => undefined)
     }
   },
-)
-
-watch(
-  () => props.chapters,
-  (chapters) => {
-    if (!props.chapterId && chapters.length) {
-      emit('update:chapterId', chapters[0].id)
-    }
-  },
-  { immediate: true },
 )
 
 onMounted(() => {
@@ -409,8 +532,20 @@ onBeforeUnmount(() => {
           <p class="eyebrow">SCRIPT / 有声剧本</p>
           <div class="mt-2 flex flex-wrap items-center gap-2">
             <h2 class="font-display text-xl text-fog-100">剧本标记与表演提示</h2>
+            <button
+              v-if="state && needsReview"
+              type="button"
+              class="nv-focus rounded"
+              aria-label="审核本章剧本"
+              title="查看本章内容异常"
+              @click="openChapterReviews"
+            >
+              <NTag size="small" :bordered="false" :type="statusTagType(state.script_status)">
+                {{ STAGE_STATUS_LABELS[state.script_status] ?? state.script_status }} · 查看异常
+              </NTag>
+            </button>
             <NTag
-              v-if="state"
+              v-else-if="state"
               size="small"
               :bordered="false"
               :type="statusTagType(state.script_status)"
@@ -421,9 +556,17 @@ onBeforeUnmount(() => {
               v{{ activeVersion.version }} ·
               {{ ADAPTATION_LEVEL_LABELS[activeVersion.adaptation_level] ?? activeVersion.adaptation_level }}
             </NTag>
-            <NTag v-if="state?.open_reviews" size="small" :bordered="false" type="warning">
-              异常 {{ state.open_reviews }}
-            </NTag>
+            <button
+              v-if="state?.open_reviews"
+              type="button"
+              class="nv-focus rounded"
+              :aria-label="needsReview ? '查看本章剧本阻断异常' : '查看本章待处理内容问题'"
+              @click="openChapterReviews"
+            >
+              <NTag size="small" :bordered="false" :type="needsReview ? 'error' : 'warning'">
+                {{ needsReview ? `待处理内容问题 ${actionableReviewCount}` : `内容问题 ${actionableReviewCount}` }}
+              </NTag>
+            </button>
           </div>
           <p class="mt-2 max-w-2xl text-[11px] leading-5 text-fog-500">
             剧本把原文转成旁白、对白、内心独白与音效 cue，并为每个单元标注说话人、情绪与表演方式。
@@ -440,37 +583,54 @@ onBeforeUnmount(() => {
             @update:value="emit('update:chapterId', $event)"
           />
           <NButton size="small" quaternary :loading="loading" @click="load()">刷新</NButton>
-          <NButton
-            v-if="jobActive"
-            size="small"
-            secondary
-            :loading="actionLoading"
-            @click="cancel"
-          >
-            取消
-          </NButton>
-          <NButton
-            v-else
-            size="small"
-            type="primary"
-            :disabled="!chapterId || !selectedChapter?.scene_count"
-            :loading="actionLoading"
-            @click="start"
-          >
-            {{ units.length ? '重新生成剧本' : '生成剧本' }}
-          </NButton>
+          <template v-if="chapterOptions.length">
+            <NButton
+              v-if="jobActive"
+              size="small"
+              secondary
+              :loading="actionLoading"
+              @click="cancel"
+            >
+              取消
+            </NButton>
+            <NButton
+              v-else-if="!autoProductionActive"
+              size="small"
+              type="primary"
+              :loading="actionLoading"
+              @click="start"
+            >
+              {{ generateLabel }}
+            </NButton>
+            <span v-else class="px-2 text-[10px] text-brass-300">自动制作进行中</span>
+          </template>
         </div>
       </div>
 
-      <p
-        v-if="selectedChapter && !selectedChapter.scene_count"
-        class="mt-3 rounded-lg border border-brass-600/25 bg-brass-500/[0.05] px-3 py-2 text-[10px] text-brass-300"
+      <div
+        v-if="state && actionableReviewCount"
+        class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-2"
+        :class="needsReview
+          ? 'border-rust-500/35 bg-rust-500/[0.06]'
+          : 'border-lake-500/25 bg-lake-500/[0.05]'"
       >
-        本章还没有分场。请先生成分场。
-        <button type="button" class="ml-1 underline decoration-brass-500/40" @click="emit('open-scenes')">
-          去分场
-        </button>
-      </p>
+        <p class="text-[11px] leading-5" :class="needsReview ? 'text-rust-400' : 'text-fog-400'">
+          <template v-if="needsReview">
+            本章有 {{ actionableReviewCount }} 个待处理内容问题，请先查看定位与处理建议。
+          </template>
+          <template v-else>
+            本章有 {{ actionableReviewCount }} 个需要你判断的内容问题；点击条目可定位到原文或剧本具体行。
+          </template>
+        </p>
+        <NButton
+          size="tiny"
+          :type="needsReview ? 'primary' : 'default'"
+          :quaternary="!needsReview"
+          @click="openChapterReviews"
+        >
+          {{ needsReview ? '去审核本章异常' : '查看内容问题' }}
+        </NButton>
+      </div>
 
       <div v-if="job" class="mt-3 rounded-lg border border-ink-700 bg-ink-900/50 px-3.5 py-2.5">
         <div class="flex flex-wrap items-center gap-3">
@@ -496,8 +656,41 @@ onBeforeUnmount(() => {
       <NAlert v-if="error" type="error" :bordered="false" class="mt-3">{{ error }}</NAlert>
     </section>
 
-    <div v-if="!chapterId" class="rounded-xl border border-dashed border-ink-700 px-6 py-16 text-center text-[11px] text-fog-500">
-      本书还没有章节。
+    <section v-if="scenes?.scenes.length" class="nv-card rounded-xl px-5 py-4">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p class="eyebrow">CHAPTER ANALYSIS / 本章分析</p>
+          <h3 class="mt-1 font-display text-base text-fog-100">本章场景与剧情概要</h3>
+        </div>
+        <NTag size="small" :bordered="false">{{ scenes.scenes.length }} 个场景</NTag>
+      </div>
+      <div class="mt-3 space-y-2">
+        <article
+          v-for="scene in scenes.scenes"
+          :key="scene.id"
+          class="rounded-lg border border-ink-700/70 bg-ink-900/40 px-3 py-2.5"
+        >
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-fog-500">
+            <span class="font-mono text-brass-300">{{ String(scene.scene_index + 1).padStart(2, '0') }}</span>
+            <span v-if="scene.location">地点：{{ scene.location }}</span>
+            <span v-if="scene.story_time_label">时间：{{ scene.story_time_label }}</span>
+            <span v-if="scene.pov_character_name">视角：{{ scene.pov_character_name }}</span>
+            <span v-if="scene.mood">情绪：{{ scene.mood }}</span>
+          </div>
+          <p v-if="scene.title" class="mt-1 text-[12px] font-medium text-fog-200">{{ scene.title }}</p>
+          <p v-if="scene.summary" class="mt-1 text-[11px] leading-5 text-fog-400">{{ scene.summary }}</p>
+        </article>
+      </div>
+    </section>
+
+    <ChapterPlaylist v-if="units.length" :units="units" />
+
+    <div v-if="!chapterOptions.length" class="rounded-xl border border-dashed border-ink-700 px-6 py-16 text-center text-[11px] text-fog-500">
+      没有纳入制作的章节，请先在章节页确认正文
+    </div>
+
+    <div v-else-if="!chapterId" class="rounded-xl border border-dashed border-ink-700 px-6 py-16 text-center text-[11px] text-fog-500">
+      请选择纳入制作的章节。
     </div>
 
     <div v-else-if="loading && !state" class="flex items-center justify-center py-24 text-xs text-fog-400">
@@ -509,18 +702,26 @@ onBeforeUnmount(() => {
       v-else-if="!units.length"
       class="flex min-h-[280px] flex-col items-center justify-center rounded-xl border border-dashed border-ink-700 bg-ink-900/30 px-8 text-center"
     >
-      <h3 class="font-display text-lg text-fog-200">本章还没有有声剧本</h3>
+      <NSpin v-if="waitingForAuto" size="small" class="mb-4" />
+      <h3 class="font-display text-lg text-fog-200">
+        {{ waitingForAuto ? '本章正在等待自动生成' : '本章还没有有声剧本' }}
+      </h3>
       <p class="mt-2 max-w-md text-[11px] leading-6 text-fog-500">
-        生成时会保留原文，并按轻改编原则只做朗读所需的最小调整。完成后可在这里检查每个单元的说话人与表演提示。
+        <template v-if="waitingForAuto">
+          自动制作正在逐章处理，本章完成后会直接显示剧本；已完成的章节可以随时切换查看。
+        </template>
+        <template v-else>
+          生成时会保留原文，并按轻改编原则只做朗读所需的最小调整。完成后可在这里检查每个单元的说话人与表演提示。
+        </template>
       </p>
       <NButton
+        v-if="!autoProductionActive && !jobActive"
         class="mt-4"
         type="primary"
-        :disabled="!selectedChapter?.scene_count"
         :loading="actionLoading"
         @click="start"
       >
-        生成本章剧本
+        {{ generateLabel }}
       </NButton>
     </div>
 
@@ -553,7 +754,9 @@ onBeforeUnmount(() => {
           <span class="text-sm text-rust-400">未选角 {{ missingVoiceCount }}</span>
         </template>
         <div class="ml-auto flex items-center gap-2">
-          <NButton size="tiny" quaternary @click="emit('open-reviews')">查看异常</NButton>
+          <NButton v-if="reviewItems.length" size="tiny" quaternary @click="openChapterReviews">
+            {{ needsReview ? '审核本章异常' : '查看本章内容问题' }}
+          </NButton>
           <NButton size="tiny" quaternary @click="showVersions = !showVersions">
             {{ showVersions ? '收起版本' : `版本历史（${versions.length}）` }}
           </NButton>
@@ -605,7 +808,7 @@ onBeforeUnmount(() => {
       </section>
 
       <div v-if="activeVersion && activeVersion.source_scene_version !== selectedChapter?.scene_version" class="rounded-lg border border-brass-600/30 bg-brass-500/[0.06] px-3.5 py-2 text-[10px] leading-5 text-brass-200">
-        当前剧本基于分场 v{{ activeVersion.source_scene_version }}，而本章现在使用分场
+        当前剧本基于分场 v{{ activeVersion.source_scene_version ?? '无' }}，而本章现在使用分场
         v{{ selectedChapter?.scene_version }}。建议重新生成剧本，避免说话人与状态不一致。
       </div>
 
@@ -613,8 +816,12 @@ onBeforeUnmount(() => {
         <article
           v-for="unit in filteredUnits"
           :key="unit.id"
-          class="rounded-xl border px-4 py-3.5"
-          :class="unitTone(unit)"
+          :id="`script-unit-${unit.id}`"
+          class="scroll-mt-24 rounded-xl border px-4 py-3.5 transition-shadow"
+          :class="[
+            unitTone(unit),
+            focusUnitId === unit.id ? 'ring-2 ring-brass-400/70' : '',
+          ]"
         >
           <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
             <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
@@ -647,7 +854,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div
-            v-if="unit.emotion !== 'neutral' || unit.delivery !== 'normal' || unit.review_status === 'needs_review'"
+            v-if="unit.emotion !== 'neutral' || unit.delivery !== 'normal' || needsReviewUnitIds.has(unit.id)"
             class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm text-fog-500"
           >
             <span v-if="unit.emotion !== 'neutral'" class="inline-flex items-center gap-1.5">
@@ -663,8 +870,8 @@ onBeforeUnmount(() => {
                 {{ DELIVERY_LABELS[unit.delivery] ?? unit.delivery }}
               </NTag>
             </span>
-            <NTag v-if="unit.review_status === 'needs_review'" size="tiny" :bordered="false" type="warning">
-              待审核
+            <NTag v-if="needsReviewUnitIds.has(unit.id)" size="tiny" :bordered="false" type="warning">
+              内容问题
             </NTag>
           </div>
 
@@ -680,6 +887,20 @@ onBeforeUnmount(() => {
           >
             原文：{{ unit.source_text }}
           </p>
+
+          <div v-if="unit.unit_type === 'dialogue'" class="mt-2 flex flex-wrap items-center gap-2">
+            <span class="text-[10px] text-fog-500">确认说话人</span>
+            <NSelect
+              :value="selectedSpeakerValue(unit)"
+              :options="speakerOptions"
+              size="tiny"
+              class="w-40"
+              :loading="speakerActionUnitId === unit.id"
+              :disabled="Boolean(speakerActionUnitId)"
+              @update:value="updateSpeaker(unit, $event)"
+            />
+            <span class="text-[10px] text-fog-600">修改后原音频保留为历史版本</span>
+          </div>
 
           <div
             v-if="isTtsUnit(unit)"
@@ -719,7 +940,7 @@ onBeforeUnmount(() => {
             v-else-if="isTtsUnit(unit) && unit.audio_status === 'failed'"
             class="mt-1.5 text-sm text-rust-400"
           >
-            上次生成失败，可在异常收件箱查看原因后重试。
+            上次生成失败，这是系统任务故障；请在本章上方任务状态中查看原因，然后点击“重试”。
           </p>
 
           <div class="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-fog-500">
@@ -732,28 +953,37 @@ onBeforeUnmount(() => {
         </article>
       </div>
 
-      <section v-if="state?.review_items.length" class="nv-card rounded-xl px-4 py-3.5">
-        <div class="flex items-center justify-between">
-          <h3 class="font-display text-base text-fog-100">本章待处理异常</h3>
-          <NButton size="tiny" quaternary @click="emit('open-reviews')">去收件箱</NButton>
-        </div>
-        <div class="mt-2 space-y-1.5">
-          <button
-            v-for="item in state.review_items"
-            :key="item.id"
-            type="button"
-            class="flex w-full items-start gap-2 rounded-lg bg-ink-900/60 px-2.5 py-2 text-left"
-            :title="item.code"
-            @click="emit('open-reviews')"
-          >
-            <NTag size="tiny" :bordered="false" :type="severityTagType(item.severity)">
-              {{ REVIEW_SEVERITY_LABELS[item.severity] ?? item.severity }}
-            </NTag>
-            <span class="min-w-0 flex-1 text-[10px] leading-5 text-fog-300">{{ item.title }}</span>
-          </button>
-        </div>
-      </section>
     </template>
+
+    <section v-if="reviewItems.length" class="nv-card rounded-xl px-4 py-3.5">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 class="font-display text-base text-fog-100">
+            {{ needsReview ? '本章待处理内容问题' : '本章内容问题' }}
+          </h3>
+          <p class="mt-0.5 text-[10px] text-fog-500">
+            点击条目定位到问题行；只有 AI 无法可靠判断的内容问题会出现在这里。
+          </p>
+        </div>
+        <NButton size="tiny" quaternary @click="openChapterReviews">去收件箱</NButton>
+      </div>
+      <div class="mt-2 space-y-1.5">
+        <button
+          v-for="item in reviewItems"
+          :key="item.id"
+          type="button"
+          class="flex w-full items-start gap-2 rounded-lg bg-ink-900/60 px-2.5 py-2 text-left"
+          :title="item.code"
+          @click="focusReview(item)"
+        >
+          <NTag size="tiny" :bordered="false" :type="severityTagType(item.severity)">
+            {{ REVIEW_SEVERITY_LABELS[item.severity] ?? item.severity }}
+          </NTag>
+          <span class="min-w-0 flex-1 text-[10px] leading-5 text-fog-300">{{ item.title }}</span>
+          <span class="shrink-0 text-[9px] text-brass-300">定位问题行</span>
+        </button>
+      </div>
+    </section>
 
     <UnitAudioVersionsModal
       v-model:show="showAudioVersions"

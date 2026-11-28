@@ -17,7 +17,7 @@ class ScriptVersionOut(BaseModel):
     version: int
     status: str
     adaptation_level: str
-    source_scene_version: int
+    source_scene_version: int | None = None
     source_hash: str | None = None
     prompt_version: str | None = None
     model: str | None = None
@@ -67,6 +67,11 @@ class ScriptUnitOut(BaseModel):
     source: str = "ai"
     created_at: datetime
     updated_at: datetime
+
+
+class ScriptUnitSpeakerUpdate(BaseModel):
+    speaker_type: str = Field(pattern="^(character|narrator|unknown)$")
+    speaker_id: str | None = None
 
 
 class ScriptReviewItemOut(BaseModel):

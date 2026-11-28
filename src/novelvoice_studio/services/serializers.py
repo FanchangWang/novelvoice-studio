@@ -23,6 +23,7 @@ def to_book_summary(book: Book, chapter_count: int) -> BookSummary:
         chapter_count=chapter_count,
         created_at=book.created_at,
         updated_at=book.updated_at,
+        deleted_at=book.deleted_at,
     )
 
 
@@ -32,7 +33,6 @@ def to_book_detail(book: Book, chapter_count: int) -> BookDetail:
         project_dir=book.project_dir,
         source_file_path=book.source_file_path,
         import_warnings=[str(item) for item in (book.import_warnings_json or [])],
-        deleted_at=book.deleted_at,
     )
 
 
@@ -42,6 +42,11 @@ def to_chapter_summary(chapter: Chapter) -> ChapterSummary:
         book_id=chapter.book_id,
         title=chapter.title,
         sequence=chapter.sequence,
+        volume_number=chapter.volume_number,
+        volume_title=chapter.volume_title,
+        chapter_kind=chapter.chapter_kind,
+        classification_status=chapter.classification_status,
+        analysis_included=chapter.analysis_included,
         char_count=chapter.char_count,
         source_start_offset=chapter.source_start_offset,
         source_end_offset=chapter.source_end_offset,

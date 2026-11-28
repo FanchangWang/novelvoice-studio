@@ -599,6 +599,7 @@ class UnitAudioService:
                 payload_json=payload,
                 status="open",
                 source="system",
+                category="system",
                 created_at=utc_now(),
                 updated_at=utc_now(),
             )

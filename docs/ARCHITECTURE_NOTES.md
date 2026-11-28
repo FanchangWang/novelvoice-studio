@@ -155,7 +155,7 @@ SQLite 的 `(book_id, sequence)` 唯一约束立即检查，而批量 UPDATE 不
 - 音频以 Base64 JSON 输入、以音频字节输出，元数据放 `X-NVS-*` 响应头；服务不读取调用方路径，不执行任意文件访问，不自动下载模型。
 - 统一控制命令为 `uv run novelvoice-studio worker list|status|start|stop|restart|logs`；`scripts/start_workers.ps1` 与 `stop_workers.ps1` 只是兼容入口。控制器从 `voice_design.worker_url` / `tts.worker_url` 解析端口，不重复配置。
 - 状态和日志写入 `.run/workers`；状态同时记录启动器 PID 与 `/health` 回填的实际服务 PID。启动前检查 `/health` 与端口；停止时优先请求 `/v1/shutdown`（实例 ID 必须一致），`--force` 只在进程仍存活且命令行指向登记的 `server.py` 时结束进程，外部启动的服务只报告、不误杀。
-- 模型按需加载，首次生成较慢；`--preload` 可提前加载，但会提前占用显存。服务环境与模型缓存不进入应用 venv，也不提交仓库。语音模型默认缓存到数据目录的 `cache/modelscope`；Ollama LLM 仍由 Ollama 管理在其默认目录（`%USERPROFILE%\.ollama\models`），不放进项目数据目录。
+- 模型按需加载，首次生成较慢；`--preload` 可提前加载，但会提前占用显存。服务环境与模型缓存不进入应用 venv，也不提交仓库。语音模型默认缓存到独立的 `%USERPROFILE%\Documents\ModelScope`，不属于应用数据目录，清理书籍数据时不得删除；Ollama LLM 仍由 Ollama 管理在其默认目录（`%USERPROFILE%\.ollama\models`）。
 
 ### 9.4 前端
 

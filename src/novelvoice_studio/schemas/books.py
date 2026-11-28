@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-DuplicatePolicy = Literal["new", "reject", "replace"]
+DuplicatePolicy = Literal["new", "reject", "replace", "merge"]
 
 
 class BookCreate(BaseModel):
@@ -44,13 +44,13 @@ class BookSummary(BaseModel):
     chapter_count: int
     created_at: datetime
     updated_at: datetime
+    deleted_at: datetime | None = None
 
 
 class BookDetail(BookSummary):
     project_dir: str
     source_file_path: str | None
     import_warnings: list[str] = Field(default_factory=list)
-    deleted_at: datetime | None = None
 
 
 class DuplicateBookInfo(BaseModel):
@@ -64,6 +64,17 @@ class EncodingCandidateOut(BaseModel):
     label: str
     confidence: float
     reason: str
+
+
+class BookMetadataOut(BaseModel):
+    title: str | None = None
+    author: str | None = None
+    description: str | None = None
+    title_source: str = "filename"
+    author_source: str | None = None
+    description_source: str | None = None
+    confidence: float = 0.0
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ImportPreviewResponse(BaseModel):
@@ -81,16 +92,25 @@ class ImportPreviewResponse(BaseModel):
     chapter_count: int
     chapter_titles: list[str]
     chapters_truncated: bool
+    structure_source: Literal["rules", "ai", "custom"] = "rules"
+    ai_assisted: bool = False
     warnings: list[str]
     duplicate: DuplicateBookInfo | None = None
+    metadata: BookMetadataOut = Field(default_factory=BookMetadataOut)
 
 
 class ImportResult(BaseModel):
     book: BookDetail
     chapters_created: int
+    chapters_updated: int = 0
+    chapters_unchanged: int = 0
+    chapters_changed: int = 0
     encoding: str
     warnings: list[str]
     replaced: bool = False
+    mode: Literal["new", "replace", "merge"] = "new"
+    structure_source: Literal["rules", "ai", "custom"] = "rules"
+    ai_assisted: bool = False
 
 
 class BookListResponse(BaseModel):

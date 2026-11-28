@@ -40,6 +40,9 @@ class ReviewItem(Base):
         CheckConstraint(f"severity IN {_SEVERITY}", name="ck_review_items_severity"),
         CheckConstraint(f"status IN {_STATUS}", name="ck_review_items_status"),
         CheckConstraint(f"source IN {_SOURCE_SQL}", name="ck_review_items_source"),
+        CheckConstraint(
+            "category IN ('content','system')", name="ck_review_items_category"
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -53,6 +56,7 @@ class ReviewItem(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     message: Mapped[str | None] = mapped_column(Text)
     payload_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    category: Mapped[str] = mapped_column(String(16), default="content", nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="open", nullable=False)
     source: Mapped[str] = mapped_column(String(16), default="system", nullable=False)
     resolution_note: Mapped[str | None] = mapped_column(Text)

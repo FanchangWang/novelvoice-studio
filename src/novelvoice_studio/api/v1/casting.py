@@ -11,6 +11,7 @@ from novelvoice_studio.schemas.casting import (
     BookCastsResponse,
     CastAssignRequest,
     CastingStatusResponse,
+    GeneralVoicePresetListOut,
     VoiceActorCreateRequest,
     VoiceActorListResponse,
     VoiceActorOut,
@@ -29,6 +30,8 @@ def list_voice_actors(
     actor_status: str | None = Query(
         default=None, alias="status", pattern="^(draft|ready|failed|archived)$"
     ),
+    scope: str | None = Query(default=None, pattern="^(general|book)$"),
+    book_id: str | None = Query(default=None, max_length=32),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> VoiceActorListResponse:
@@ -36,9 +39,27 @@ def list_voice_actors(
         query=q,
         favorite=favorite,
         status=actor_status,
+        scope=scope,
+        book_id=book_id,
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/voice-actors/general-presets", response_model=GeneralVoicePresetListOut)
+def list_general_voice_presets(service: CastingServiceDep) -> GeneralVoicePresetListOut:
+    return service.list_general_presets()
+
+
+@router.post(
+    "/voice-actors/general-presets/{preset_id}/generate",
+    response_model=VoiceActorOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def generate_general_voice_preset(
+    preset_id: str, service: CastingServiceDep
+) -> VoiceActorOut:
+    return service.generate_general_preset(preset_id)
 
 
 @router.post(

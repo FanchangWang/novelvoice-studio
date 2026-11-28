@@ -596,7 +596,10 @@ def test_previous_summary_is_passed_to_next_chapter(
 ) -> None:
     response = upload("/api/v1/books/import", sample_text, title="上下文测试")
     book_id = response.json()["book"]["id"]
-    chapters = client.get(f"/api/v1/books/{book_id}/chapters").json()["items"]
+    chapters = [
+        item for item in client.get(f"/api/v1/books/{book_id}/chapters").json()["items"]
+        if item["analysis_included"]
+    ]
 
     row = db_session.get(Chapter, chapters[0]["id"])
     assert row is not None
@@ -610,7 +613,7 @@ def test_previous_summary_is_passed_to_next_chapter(
     assert analyzed.status_code == 200
     assert llm.character_contexts[-1]["previous_summary"] == "前一章摘要"
     assert llm.segment_contexts[-1]["previous_summary"] == "前一章摘要"
-    assert llm.character_contexts[-1]["chapter_sequence"] == 2
+    assert llm.character_contexts[-1]["chapter_sequence"] == chapters[1]["sequence"]
     assert llm.segment_contexts[-1]["chapter_title"] == chapters[1]["title"]
 
 

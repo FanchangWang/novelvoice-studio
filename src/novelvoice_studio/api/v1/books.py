@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, File, Form, Query, Response, UploadFile, status
 
 from novelvoice_studio.api.deps import (
@@ -28,8 +30,12 @@ router = APIRouter(prefix="/books", tags=["books"])
 def list_books(
     service: BookServiceDep,
     include_deleted: bool = Query(default=False),
+    deleted_only: bool = Query(default=False),
 ) -> BookListResponse:
-    items, total = service.list_books(include_deleted=include_deleted)
+    items, total = service.list_books(
+        include_deleted=include_deleted,
+        deleted_only=deleted_only,
+    )
     return BookListResponse(items=items, total=total)
 
 
@@ -105,12 +111,25 @@ def restore_book(book_id: str, service: BookServiceDep) -> BookDetail:
     return service.restore(book_id)
 
 
+@router.delete("/{book_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
+def permanently_delete_book(book_id: str, service: BookServiceDep) -> Response:
+    service.permanent_delete(book_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/{book_id}/chapters", response_model=ChapterListResponse)
 def list_chapters(
     book_id: str,
     books: BookServiceDep,
     chapters: ChapterServiceDep,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    kind: Literal["story", "extra", "author_note", "unclassified"] | None = None,
 ) -> ChapterListResponse:
     book = books.get_book(book_id)
-    items = chapters.summaries_for_book(book)
-    return ChapterListResponse(items=items, total=len(items))
+    items, total = chapters.page_for_book(
+        book, page=page, page_size=page_size, kind=kind
+    )
+    return ChapterListResponse(
+        items=items, total=total, page=page, page_size=page_size
+    )

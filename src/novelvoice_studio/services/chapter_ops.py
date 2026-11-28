@@ -40,6 +40,31 @@ class ChapterService:
     def summaries_for_book(self, book: Book) -> list[ChapterSummary]:
         return [to_chapter_summary(item) for item in self.list_for_book(book)]
 
+    def page_for_book(
+        self,
+        book: Book,
+        *,
+        page: int = 1,
+        page_size: int = 20,
+        kind: str | None = None,
+    ) -> tuple[list[ChapterSummary], int]:
+        conditions = [Chapter.book_id == book.id]
+        if kind is not None:
+            if kind not in {"story", "extra", "author_note", "unclassified"}:
+                raise ValidationError("章节分类筛选无效")
+            conditions.append(Chapter.chapter_kind == kind)
+        total = int(
+            self.session.scalar(select(func.count(Chapter.id)).where(*conditions)) or 0
+        )
+        rows = self.session.scalars(
+            select(Chapter)
+            .where(*conditions)
+            .order_by(Chapter.sequence.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        return [to_chapter_summary(item) for item in rows], total
+
     def get_with_book(self, chapter_id: str) -> tuple[Chapter, Book]:
         validate_id(chapter_id, "ch")
         chapter = self.session.get(Chapter, chapter_id)
@@ -70,12 +95,34 @@ class ChapterService:
 
     # ---------- write ----------
 
-    def update_title(self, chapter_id: str, title: str) -> ChapterSummary:
+    def update_title(self, chapter_id: str, title: str | None = None,
+                     chapter_kind: str | None = None,
+                     analysis_included: bool | None = None,
+                     classification_status: str | None = None) -> ChapterSummary:
         chapter, _book = self.get_with_book(chapter_id)
-        cleaned = title.strip()
-        if not cleaned:
-            raise ValidationError("章节标题不能为空")
-        chapter.title = cleaned[:255]
+        if title is not None:
+            cleaned = title.strip()
+            if not cleaned:
+                raise ValidationError("章节标题不能为空")
+            chapter.title = cleaned[:255]
+        if chapter_kind is not None:
+            if chapter_kind not in {"story", "extra", "author_note", "unclassified"}:
+                raise ValidationError("章节分类无效")
+            chapter.chapter_kind = chapter_kind
+            chapter.classification_status = "confirmed"
+            if chapter_kind == "unclassified":
+                chapter.analysis_included = False
+        if classification_status is not None:
+            if classification_status not in {"ai_suggested", "confirmed", "unclassified"}:
+                raise ValidationError("章节分类状态无效")
+            chapter.classification_status = classification_status
+            if classification_status == "unclassified":
+                chapter.chapter_kind = "unclassified"
+                chapter.analysis_included = False
+        if analysis_included is not None:
+            chapter.analysis_included = bool(analysis_included)
+            if chapter.analysis_included and chapter.chapter_kind == "unclassified":
+                raise ValidationError("未分类章节不能纳入分析，请先确认章节类型")
         self.session.commit()
         self.session.refresh(chapter)
         return to_chapter_summary(chapter)
@@ -115,6 +162,7 @@ class ChapterService:
         self._shift_sequences(later, 1)
 
         chapter.source_end_offset = split_offset
+        chapter.source_hash = None
         chapter.analysis_status = "not_started"
         chapter.summary = None
         chapter.summary_json = {}
@@ -125,6 +173,11 @@ class ChapterService:
             book_id=book.id,
             title=title,
             sequence=chapter.sequence + 1,
+            volume_number=chapter.volume_number,
+            volume_title=chapter.volume_title,
+            chapter_kind=chapter.chapter_kind,
+            classification_status=chapter.classification_status,
+            analysis_included=chapter.analysis_included,
             source_start_offset=split_offset,
             source_end_offset=old_end,
             analysis_status="not_started",
@@ -172,6 +225,7 @@ class ChapterService:
         self.session.flush()
 
         target.source_end_offset = last.source_end_offset
+        target.source_hash = None
         target.title = (new_title or target.title).strip()[:255]
         target.analysis_status = "not_started"
         target.summary = None

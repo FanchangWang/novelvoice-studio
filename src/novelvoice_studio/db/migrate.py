@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -44,8 +45,11 @@ def backup_sqlite(db_path: Path, backups_dir: Path) -> Path | None:
     while target.exists():
         target = backups_dir / f"app-{stamp}-{counter}.db"
         counter += 1
-    with sqlite3.connect(db_path) as source, sqlite3.connect(target) as destination:
+    with closing(sqlite3.connect(db_path)) as source, closing(
+        sqlite3.connect(target)
+    ) as destination:
         source.backup(destination)
+        destination.commit()
     logger.info("数据库已备份: %s", target)
     return target
 
@@ -62,7 +66,7 @@ def current_revision(db_path: Path) -> str | None:
     if not db_path.is_file():
         return None
     try:
-        with sqlite3.connect(db_path) as connection:
+        with closing(sqlite3.connect(db_path)) as connection:
             row = connection.execute("SELECT version_num FROM alembic_version LIMIT 1").fetchone()
     except sqlite3.Error:
         return None

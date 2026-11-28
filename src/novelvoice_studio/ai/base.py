@@ -358,6 +358,49 @@ class SegmentAnalysisResult(BaseModel):
     meta: dict[str, Any] = Field(default_factory=dict)
 
 
+class ImportHeadingDraft(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    line_number: int = Field(ge=1)
+    heading_type: Literal["volume", "story", "extra", "author_note"] = "story"
+    volume_number: int | None = Field(default=None, ge=0)
+    confidence: float = 0.0
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _clamp_confidence(cls, value: object) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, number))
+
+
+class ImportMetadataDraft(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    title: str | None = Field(default=None, max_length=255)
+    author: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=180)
+    confidence: float = 0.0
+
+    @field_validator("confidence", mode="before")
+    @classmethod
+    def _clamp_confidence(cls, value: object) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, min(1.0, number))
+
+
+class ImportStructureResult(BaseModel):
+    headings: list[ImportHeadingDraft] = Field(default_factory=list)
+    metadata: ImportMetadataDraft | None = None
+    notes: list[str] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
 class ChapterSummaryResult(BaseModel):
     summary: str = Field(min_length=1)
     key_events: list[str] = Field(default_factory=list)
@@ -417,6 +460,8 @@ class BibleArcDraft(BaseModel):
     story_time_end: str | None = None
     summary: str | None = None
     voice_hint: str | None = None
+    age_stage_explicit: bool = False
+    age_stage_evidence: list[str] = Field(default_factory=list)
     confidence: float = 0.0
 
     @field_validator("age_stage", mode="before")
@@ -760,6 +805,17 @@ class LLMProvider(ABC):
     def summarize_chapter(
         self, text: str, known_characters: list[dict[str, Any]]
     ) -> ChapterSummaryResult: ...
+
+    def inspect_import(
+        self,
+        front_matter: str,
+        candidates: list[dict[str, object]],
+        rule_headings: list[dict[str, object]],
+        *,
+        include_metadata: bool = True,
+    ) -> ImportStructureResult:
+        """识别 TXT 导入的卷/章节结构与书目信息；只使用本机模型。"""
+        raise NotImplementedError("当前 LLM Provider 不支持导入结构识别")
 
     def extract_bible_characters(
         self,

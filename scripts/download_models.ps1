@@ -5,7 +5,11 @@
 
 $ErrorActionPreference = "Stop"
 
-$cache = Join-Path $env:USERPROFILE "Documents\NovelVoiceStudio\cache\modelscope"
+$cache = if ($env:NOVELVOICE_MODEL_CACHE) {
+    $env:NOVELVOICE_MODEL_CACHE
+} else {
+    Join-Path $env:USERPROFILE "Documents\ModelScope"
+}
 New-Item -ItemType Directory -Force -Path $cache | Out-Null
 
 $models = @(

@@ -92,10 +92,10 @@ uv run python -m novelvoice_studio.poc.ollama_json_check
 
 ### 3.1 存储位置
 
-语音模型由本项目脚本显式下载，默认放在应用数据目录：
+语音模型由本项目脚本显式下载，默认放在独立 ModelScope 目录：
 
 ```text
-%USERPROFILE%\Documents\NovelVoiceStudio\cache\modelscope\
+%USERPROFILE%\Documents\ModelScope\
   Qwen3-TTS-12Hz-1.7B-VoiceDesign\
   Fun-CosyVoice3-0.5B-2512\
   CosyVoice-ttsfrd\
@@ -159,6 +159,8 @@ Invoke-RestMethod http://127.0.0.1:8767/health
 4. 在书籍工作区的「配音」页逐段生成、试听和回退版本。
 
 引擎服务的模型目录可通过 `NOVELVOICE_QWEN_MODEL_DIR` / `NOVELVOICE_COSYVOICE_MODEL_DIR` 覆盖；两者默认都从 `NOVELVOICE_MODEL_CACHE` 下的对应子目录加载。
+
+ModelScope 语音模型统一存放在 `%USERPROFILE%\Documents\ModelScope`（本机即 `C:\Users\guyue\Documents\ModelScope`），与 `Documents\NovelVoiceStudio` 应用数据目录分离。下载脚本、两个引擎服务以及手工启动都已使用这一默认路径；设置 `NOVELVOICE_MODEL_CACHE` 可覆盖。该目录保存模型权重，不属于书籍脏数据，清空应用数据时不得删除。Ollama LLM 仍由 Ollama 管理在 `%USERPROFILE%\.ollama\models`，不会下载到此目录。
 
 ## 4. 许可证与核对边界
 

@@ -13,6 +13,7 @@ import {
 } from 'naive-ui'
 
 import { api } from '@/api/client'
+import ActorEditModal from '@/components/actors/ActorEditModal.vue'
 import type {
   BookCastsResponse,
   CastCharacterPlanOut,
@@ -45,10 +46,14 @@ const favoritesOnly = ref(false)
 const selectedId = ref<string | null>(null)
 const saving = ref(false)
 const error = ref<string | null>(null)
+const showActorEditor = ref(false)
 
 const filtered = computed(() => {
   const keyword = search.value.trim().toLowerCase()
   return actors.items.filter((actor) => {
+    if (actor.scope === 'book' && actor.source_book_id !== props.bookId) {
+      return false
+    }
     if (favoritesOnly.value && !actor.is_favorite) {
       return false
     }
@@ -85,13 +90,19 @@ const hint = computed(() => {
   if (props.scope === 'character_stage') {
     return '阶段选角只覆盖该年龄阶段；没有阶段绑定时会使用角色的基础配音员。'
   }
-  return '基础选角适用于该角色的全部年龄阶段；阶段绑定会优先。'
+  return '通用声线可跨书复用；书籍专属声线仅当前书可选。阶段绑定优先于基础声线。'
 })
 
 async function loadActors(): Promise<void> {
   error.value = null
   try {
-    await actors.load({ q: '', favorite: undefined, status: 'ready', limit: 200 })
+    await actors.load({
+      q: '',
+      favorite: undefined,
+      status: 'ready',
+      bookId: props.bookId,
+      limit: 200,
+    })
   } catch (err) {
     error.value = errorMessage(err)
   }
@@ -223,6 +234,9 @@ watch(show, (visible) => {
             <span class="text-[12px] font-medium text-fog-100">{{ actor.display_name }}</span>
             <NTag v-if="actor.is_mock" size="tiny" :bordered="false" type="warning">MOCK</NTag>
             <NTag v-if="actor.is_favorite" size="tiny" :bordered="false" type="success">收藏</NTag>
+            <NTag size="tiny" :bordered="false" :type="actor.scope === 'general' ? 'info' : 'warning'">
+              {{ actor.scope === 'general' ? '通用' : '本书专属' }}
+            </NTag>
             <span class="ml-auto font-mono text-[9px] text-fog-600">
               用于 {{ actor.usage.active_cast_count }} 个角色
             </span>
@@ -254,9 +268,14 @@ watch(show, (visible) => {
 
     <template #footer>
       <div class="flex items-center justify-between gap-3">
-        <span class="text-[10px] text-fog-500">
-          {{ filtered.length }} 位可用配音员
-        </span>
+        <div class="flex items-center gap-2">
+          <NButton size="small" quaternary @click="showActorEditor = true">
+            生成本书专属声线
+          </NButton>
+          <span class="text-[10px] text-fog-500">
+            {{ filtered.length }} 位可用配音员
+          </span>
+        </div>
         <div class="flex gap-2">
           <NButton :disabled="saving" @click="show = false">取消</NButton>
           <NButton type="primary" :loading="saving" :disabled="!selectedId" @click="confirm">
@@ -266,4 +285,10 @@ watch(show, (visible) => {
       </div>
     </template>
   </NModal>
+
+  <ActorEditModal
+    v-model:show="showActorEditor"
+    :source-book-id="bookId"
+    @saved="loadActors"
+  />
 </template>

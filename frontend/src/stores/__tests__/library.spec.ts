@@ -24,6 +24,7 @@ vi.mock('@/api/client', () => {
       listBooks: vi.fn(),
       deleteBook: vi.fn(),
       restoreBook: vi.fn(),
+      permanentlyDeleteBook: vi.fn(),
     },
   }
 })
@@ -34,6 +35,7 @@ import { useLibraryStore } from '@/stores/library'
 const listBooks = vi.mocked(api.listBooks)
 const deleteBook = vi.mocked(api.deleteBook)
 const restoreBook = vi.mocked(api.restoreBook)
+const permanentlyDeleteBook = vi.mocked(api.permanentlyDeleteBook)
 
 function makeBook(overrides: Partial<BookSummary> = {}): BookSummary {
   return {
@@ -59,50 +61,69 @@ beforeEach(() => {
 })
 
 describe('library store', () => {
-  it('loads books and derives totals', async () => {
+  it('loads active books and derives totals', async () => {
     const store = useLibraryStore()
     await store.fetchBooks()
 
-    expect(listBooks).toHaveBeenCalledWith(false)
+    expect(listBooks).toHaveBeenCalledWith()
     expect(store.total).toBe(1)
     expect(store.totalChapters).toBe(3)
     expect(store.totalCharacters).toBe(1200)
   })
 
-  it('toggles the recycle bin query', async () => {
+  it('loads the recycle bin through a dedicated query', async () => {
     const store = useLibraryStore()
     listBooks.mockResolvedValue({
       items: [makeBook({ status: 'deleted' })],
       total: 1,
     })
 
-    await store.setIncludeDeleted(true)
+    await store.fetchTrash()
 
-    expect(store.includeDeleted).toBe(true)
-    expect(listBooks).toHaveBeenLastCalledWith(true)
+    expect(listBooks).toHaveBeenCalledWith(false, true)
+    expect(store.trashTotal).toBe(1)
     expect(store.totalChapters).toBe(0)
   })
 
-  it('deletes a book then refreshes the list', async () => {
+  it('moves a book to trash and refreshes both lists', async () => {
     const store = useLibraryStore()
     await store.fetchBooks()
     deleteBook.mockResolvedValue(undefined)
-    listBooks.mockResolvedValue({ items: [], total: 0 })
+    listBooks
+      .mockResolvedValueOnce({ items: [], total: 0 })
+      .mockResolvedValueOnce({ items: [makeBook({ status: 'deleted' })], total: 1 })
 
     await store.removeBook('book_1')
 
     expect(deleteBook).toHaveBeenCalledWith('book_1')
     expect(store.books).toEqual([])
-    expect(listBooks).toHaveBeenCalledTimes(2)
+    expect(store.deletedBooks).toHaveLength(1)
   })
 
   it('restores a book through the API', async () => {
     const store = useLibraryStore()
     restoreBook.mockResolvedValue(makeBook() as never)
+    listBooks
+      .mockResolvedValueOnce({ items: [makeBook()], total: 1 })
+      .mockResolvedValueOnce({ items: [], total: 0 })
 
     await store.restoreBook('book_1')
 
     expect(restoreBook).toHaveBeenCalledWith('book_1')
+    expect(store.books).toHaveLength(1)
+    expect(store.deletedBooks).toEqual([])
+  })
+
+  it('permanently deletes a book and refreshes both lists', async () => {
+    const store = useLibraryStore()
+    permanentlyDeleteBook.mockResolvedValue(undefined)
+    listBooks.mockResolvedValue({ items: [], total: 0 })
+
+    await store.permanentDeleteBook('book_1')
+
+    expect(permanentlyDeleteBook).toHaveBeenCalledWith('book_1')
+    expect(store.books).toEqual([])
+    expect(store.deletedBooks).toEqual([])
   })
 
   it('captures load errors without throwing', async () => {

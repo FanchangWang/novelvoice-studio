@@ -10,6 +10,8 @@ from novelvoice_studio.schemas.analysis import AnalysisJobOut
 from novelvoice_studio.schemas.scripts import (
     ScriptStateResponse,
     ScriptStatusResponse,
+    ScriptUnitOut,
+    ScriptUnitSpeakerUpdate,
     ScriptVersionListResponse,
     ScriptVersionOut,
 )
@@ -19,6 +21,7 @@ router = APIRouter(tags=["scripts"])
 
 class ScriptStartIn(BaseModel):
     adaptation_level: str = Field(default="light", pattern="^(light|standard|strong)$")
+    retry_scenes: bool = False
 
 
 @router.post(
@@ -30,7 +33,8 @@ def start_script(
     chapter_id: str, service: ScriptServiceDep, payload: ScriptStartIn | None = None
 ) -> AnalysisJobOut:
     adaptation = payload.adaptation_level if payload is not None else "light"
-    return service.start_script(chapter_id, adaptation)
+    retry_scenes = payload.retry_scenes if payload is not None else False
+    return service.start_script(chapter_id, adaptation, retry_scenes=retry_scenes)
 
 
 @router.get("/chapters/{chapter_id}/script/status", response_model=ScriptStatusResponse)
@@ -57,6 +61,13 @@ def get_script_versions(
 @router.post("/chapters/{chapter_id}/script/cancel", response_model=AnalysisJobOut)
 def cancel_script(chapter_id: str, service: ScriptServiceDep) -> AnalysisJobOut:
     return service.cancel_script(chapter_id)
+
+
+@router.patch("/script-units/{unit_id}/speaker", response_model=ScriptUnitOut)
+def update_script_unit_speaker(
+    unit_id: str, payload: ScriptUnitSpeakerUpdate, service: ScriptServiceDep
+) -> ScriptUnitOut:
+    return service.update_unit_speaker(unit_id, payload)
 
 
 @router.post("/script-versions/{version_id}/approve", response_model=ScriptVersionOut)

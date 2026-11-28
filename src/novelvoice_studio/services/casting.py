@@ -12,6 +12,7 @@ import io
 import logging
 import threading
 import time
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,6 @@ from novelvoice_studio.config import Settings
 from novelvoice_studio.core.errors import (
     AppError,
     ConflictError,
-    DependencyUnavailableError,
     NotFoundError,
     ValidationError,
 )
@@ -56,6 +56,8 @@ from novelvoice_studio.schemas.casting import (
     CastCharacterPlanOut,
     CastStagePlanOut,
     CastingStatusResponse,
+    GeneralVoicePresetListOut,
+    GeneralVoicePresetOut,
     VoiceActorCreateRequest,
     VoiceActorListResponse,
     VoiceActorOut,
@@ -72,6 +74,10 @@ from novelvoice_studio.services.paths import (
     resolve_relative,
     validate_id,
 )
+from novelvoice_studio.services.voice_presets import (
+    general_voice_presets,
+    get_general_voice_preset,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +89,7 @@ LOW_CONFIDENCE_THRESHOLD = 0.65
 MAX_CAST_ITEMS = 500
 
 VOICE_DESIGN_LOCK = threading.Lock()
+PRESET_LOCK = threading.Lock()
 
 AGE_ORDER = {
     "child": 0,
@@ -121,6 +128,31 @@ _CAST_REVIEW_PREFIX = "cast_"
 
 def _age_label(value: str | None) -> str:
     return AGE_LABELS.get(str(value or "unknown"), "未定")
+
+
+_VOICE_KEYWORD_GROUPS = (
+    ("低沉", ("低沉", "低沉浑厚", "低音")),
+    ("醇厚", ("醇厚", "厚实", "浑厚")),
+    ("温润", ("温润", "温和", "温柔")),
+    ("清亮", ("清亮", "清脆", "明亮")),
+    ("清朗", ("清朗", "清爽", "阳光")),
+    ("微沙", ("微沙", "沙哑", "烟嗓")),
+    ("沉稳", ("沉稳", "稳重", "沉着")),
+    ("苍劲", ("苍劲", "沧桑", "古朴")),
+    ("威严", ("威严", "压迫", "凌厉", "不怒自威")),
+    ("活泼", ("活泼", "俏皮", "灵动")),
+    ("腼腆", ("腼腆", "害羞", "羞涩")),
+    ("理性", ("理性", "冷静", "克制")),
+)
+
+
+def _voice_keywords(text: str) -> set[str]:
+    normalized = str(text or "").casefold()
+    return {
+        label
+        for label, words in _VOICE_KEYWORD_GROUPS
+        if any(word.casefold() in normalized for word in words)
+    }
 
 
 def _clean(value: Any, limit: int = 500) -> str | None:
@@ -219,6 +251,8 @@ class CastingService:
         query: str | None = None,
         favorite: bool | None = None,
         status: str | None = None,
+        scope: str | None = None,
+        book_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> VoiceActorListResponse:
@@ -240,6 +274,19 @@ class CastingService:
                 conditions.append(VoiceActor.status != "archived")
             else:
                 conditions.append(VoiceActor.status == status)
+            if scope in {"general", "book"}:
+                conditions.append(VoiceActor.scope == scope)
+            if book_id is not None:
+                validate_id(book_id, "book")
+                self._book(session, book_id)
+                conditions.append(
+                    VoiceActor.source_book_id == book_id
+                    if scope == "book"
+                    else or_(
+                        VoiceActor.scope == "general",
+                        VoiceActor.source_book_id == book_id,
+                    )
+                )
             total = int(
                 session.scalar(select(func.count(VoiceActor.id)).where(*conditions))
                 or 0
@@ -270,6 +317,77 @@ class CastingService:
             actor = self._actor(session, actor_id)
             usage = self._usage_map(session, [actor.id])
             return self._actor_out(actor, usage.get(actor.id))
+
+    def list_general_presets(self) -> GeneralVoicePresetListOut:
+        with session_scope(self.session_factory) as session:
+            existing = {
+                str((row.generation_params_json or {}).get("general_preset_id")): row
+                for row in session.scalars(
+                    select(VoiceActor).where(
+                        VoiceActor.scope == "general",
+                        VoiceActor.generation_params_json.is_not(None),
+                    )
+                )
+                if (row.generation_params_json or {}).get("general_preset_id")
+            }
+        items = [
+            GeneralVoicePresetOut(
+                **preset,
+                actor_id=existing.get(str(preset["preset_id"])).id
+                if existing.get(str(preset["preset_id"])) is not None
+                else None,
+                actor_status=existing[str(preset["preset_id"])].status
+                if existing.get(str(preset["preset_id"])) is not None
+                else None,
+            )
+            for preset in general_voice_presets()
+        ]
+        return GeneralVoicePresetListOut(
+            items=items,
+            ready_count=sum(item.actor_status == "ready" for item in items),
+            total=len(items),
+        )
+
+    def generate_general_preset(self, preset_id: str) -> VoiceActorOut:
+        try:
+            preset = get_general_voice_preset(preset_id)
+        except KeyError as exc:
+            raise ValidationError("通用声线不存在", code="voice_preset_not_found") from exc
+        with PRESET_LOCK:
+            with session_scope(self.session_factory) as session:
+                current = next(
+                    (
+                        row
+                        for row in session.scalars(
+                            select(VoiceActor).where(VoiceActor.scope == "general")
+                        )
+                        if (row.generation_params_json or {}).get("general_preset_id")
+                        == preset_id
+                    ),
+                    None,
+                )
+                if current is not None:
+                    return self._actor_out(current)
+            actor = self.create_actor(
+                VoiceActorCreateRequest(
+                    display_name=preset["display_name"],
+                    description=preset["description"],
+                    gender_presentation=preset["gender_presentation"],
+                    age_impression=preset["age_impression"],
+                    language=preset["language"],
+                    timbre_tags=preset["timbre_tags"],
+                    personality_tags=preset["personality_tags"],
+                    seed=preset["seed"],
+                )
+            )
+            with session_scope(self.session_factory) as session:
+                row = self._actor(session, actor.id)
+                params = dict(row.generation_params_json or {})
+                params["general_preset_id"] = preset_id
+                row.generation_params_json = params
+                row.updated_at = utc_now()
+                session.flush()
+                return self._actor_out(row)
 
     def create_actor(self, payload: VoiceActorCreateRequest) -> VoiceActorOut:
         reference_text = (
@@ -326,6 +444,7 @@ class CastingService:
                 duration_ms=info["duration_ms"],
                 status="ready",
                 source="user",
+                scope="book" if payload.source_book_id else "general",
                 source_book_id=payload.source_book_id,
                 is_favorite=payload.is_favorite,
                 created_at=utc_now(),
@@ -417,6 +536,64 @@ class CastingService:
         )
 
     # ---------------------------------------------------------------- casting
+
+    def has_incompatible_auto_casts(self, book_id: str) -> bool:
+        """续作前发现硬约束不兼容或失去证据的旧自动绑定。"""
+        with session_scope(self.session_factory) as session:
+            self._book(session, book_id)
+            bible = self._active_bible(session, book_id)
+            if bible is None or bible.status not in {"approved", "needs_review"}:
+                return False
+            stage_casts = list(session.scalars(
+                select(VoiceCast).where(
+                    VoiceCast.book_id == book_id,
+                    VoiceCast.scope == "character_stage",
+                    VoiceCast.source == "auto",
+                    VoiceCast.is_active.is_(True),
+                )
+            ))
+            if stage_casts:
+                arcs = list(session.scalars(
+                    select(CharacterArc).where(CharacterArc.bible_id == bible.id)
+                ))
+                states = list(session.scalars(
+                    select(SceneCharacter)
+                    .join(Scene, Scene.id == SceneCharacter.scene_id)
+                    .where(Scene.book_id == book_id)
+                ))
+                arcs_by_character: dict[str, list[CharacterArc]] = defaultdict(list)
+                states_by_character: dict[str, list[SceneCharacter]] = defaultdict(list)
+                for arc in arcs:
+                    if arc.character_id:
+                        arcs_by_character[arc.character_id].append(arc)
+                for state in states:
+                    if state.character_id:
+                        states_by_character[state.character_id].append(state)
+                for cast in stage_casts:
+                    character = (
+                        session.get(Character, cast.character_id)
+                        if cast.character_id else None
+                    )
+                    if character is None:
+                        return True
+                    stages = self._character_stages(
+                        character,
+                        arcs_by_character.get(character.id, []),
+                        states_by_character.get(character.id, []),
+                    )
+                    allowed = {stage["age_stage"] for stage in stages}
+                    # 连续时间线只剩基准年龄时，阶段绑定即使年龄相同也是冗余的，
+                    # 必须触发选角整理，避免音频优先命中旧阶段声线。
+                    if len(stages) <= 1 or cast.age_stage_condition not in allowed:
+                        return True
+            for target in self._targets(session, book_id, bible):
+                cast = self._cast_for_target(session, book_id, target)
+                if cast is None or cast.source != "auto" or not cast.voice_actor_id:
+                    continue
+                actor = session.get(VoiceActor, cast.voice_actor_id)
+                if actor is not None and self._hard_voice_mismatch(target, actor):
+                    return True
+            return False
 
     def book_casts(self, book_id: str) -> BookCastsResponse:
         with session_scope(self.session_factory) as session:
@@ -545,6 +722,11 @@ class CastingService:
             actor = self._actor(session, payload.voice_actor_id)
             if actor.status != "ready":
                 raise ConflictError("该配音员尚未就绪，不能绑定", code="actor_not_ready")
+            if actor.scope == "book" and actor.source_book_id != book.id:
+                raise ConflictError(
+                    "书籍专属配音员只能分配给来源书籍",
+                    code="actor_book_scope_violation",
+                )
             self._actor_file(actor)
             try:
                 self._prepare_actor_reference(actor.id)
@@ -627,6 +809,53 @@ class CastingService:
             self._refresh_production_status(session, book)
             return self._plan_response(session, book)
 
+    def _collapse_unconfirmed_stage_casts(
+        self, session: Session, book_id: str, bible: BookBible | None
+    ) -> None:
+        """年龄阶段失去依据时停用自动分阶段声线，并尽量沿用原基准年龄声线。"""
+        if bible is None:
+            return
+        casts = self._active_casts(session, book_id)
+        by_character: dict[str, list[VoiceCast]] = defaultdict(list)
+        for cast in casts:
+            if cast.character_id:
+                by_character[cast.character_id].append(cast)
+        for item in self._plan_characters(session, book_id, bible):
+            character: Character = item["character"]
+            allowed = {stage["age_stage"] for stage in item["stages"]}
+            rows = by_character.get(character.id, [])
+            base = next(
+                (cast for cast in rows if cast.scope == "character"), None
+            )
+            canonical_stage = next(
+                (
+                    cast
+                    for cast in rows
+                    if cast.scope == "character_stage"
+                    and cast.age_stage_condition == character.age_range
+                ),
+                None,
+            )
+            if (
+                len(item["stages"]) <= 1
+                and base is not None
+                and base.source == "auto"
+                and canonical_stage is not None
+                and base.voice_actor_id != canonical_stage.voice_actor_id
+            ):
+                base.voice_actor_id = canonical_stage.voice_actor_id
+                base.reason = "连续时间线统一声线，沿用原基准年龄阶段声线"
+                base.updated_at = utc_now()
+            for cast in rows:
+                if cast.scope != "character_stage" or cast.source != "auto":
+                    continue
+                if cast.age_stage_condition not in allowed or (
+                    len(item["stages"]) <= 1 and base is not None
+                ):
+                    cast.is_active = False
+                    cast.updated_at = utc_now()
+        session.flush()
+
     # ---------------------------------------------------------------- workers
 
     def _run_job(self, job_id: str) -> None:
@@ -662,11 +891,28 @@ class CastingService:
                     }
                 )
                 scene_presence = self._scene_map(session, book_id)
+                self._collapse_unconfirmed_stage_casts(session, book_id, bible)
+                valid_stages = {
+                    (item["character"].id, stage["age_stage"])
+                    for item in self._plan_characters(session, book_id, bible)
+                    for stage in item["stages"]
+                }
+                raw_targets = [
+                    item
+                    for item in raw_targets
+                    if (
+                        not isinstance(item, dict)
+                        or item.get("scope") != "character_stage"
+                        or (item.get("character_id"), item.get("age_stage"))
+                        in valid_stages
+                    )
+                ]
 
             generated = 0
             reused = 0
             skipped = 0
             failed = 0
+            last_error: str | None = None
             for index, target in enumerate(targets):
                 with session_scope(self.session_factory) as session:
                     current = session.get(GenerationJob, job_id)
@@ -680,6 +926,17 @@ class CastingService:
                     scene_presence=scene_presence,
                     voices_used=base_voices + generated,
                 )
+                if outcome.get("status") == "failed":
+                    logger.warning("自动选角目标 %s 首次失败，自动重试", target.character_name or target.scope)
+                    time.sleep(0.25)
+                    outcome = self._process_target(
+                        book_id,
+                        target,
+                        job_id,
+                        presence=presence,
+                        scene_presence=scene_presence,
+                        voices_used=base_voices + generated,
+                    )
                 status = outcome.get("status")
                 if status == "generated":
                     generated += 1
@@ -689,6 +946,9 @@ class CastingService:
                     skipped += 1
                 else:
                     failed += 1
+                    detail = outcome.get("error")
+                    if detail:
+                        last_error = str(detail)
                 with session_scope(self.session_factory) as session:
                     job = session.get(GenerationJob, job_id)
                     if job is None or job.status == "cancelled":
@@ -723,10 +983,11 @@ class CastingService:
                         title="自动选角失败",
                         message="本次没有生成或复用任何配音员，请检查本机声音设计服务后重试。",
                         payload={"job_id": job.id},
+                        category="system",
                     )
                     job.status = "failed"
                     job.error_code = "casting_failed"
-                    job.error_message = "没有生成或复用任何配音员"
+                    job.error_message = last_error or "没有生成或复用任何配音员"
                     job.finished_at = utc_now()
                     job.updated_at = utc_now()
                     book.production_status = "failed"
@@ -780,8 +1041,24 @@ class CastingService:
     ) -> dict[str, Any]:
         with session_scope(self.session_factory) as session:
             book = self._book(session, book_id)
-            if self._cast_for_target(session, book.id, target) is not None:
-                return {"status": "skipped"}
+            existing = self._cast_for_target(session, book.id, target)
+            if existing is not None:
+                migrated = self._migrate_auto_cast_to_general(existing, target, job_id)
+                if migrated is not None:
+                    return migrated
+                actor = session.get(VoiceActor, existing.voice_actor_id) if existing.voice_actor_id else None
+                if existing.source == "auto" and actor is not None and self._hard_voice_mismatch(target, actor):
+                    logger.info(
+                        "自动选角替换不兼容声线：%s %s → %s",
+                        target.character_name or target.scope,
+                        actor.display_name,
+                        actor.age_impression,
+                    )
+                    existing.is_active = False
+                    existing.updated_at = utc_now()
+                    session.flush()
+                else:
+                    return {"status": "skipped"}
             picked = self._pick_actor(session, book.id, target)
             book_title = book.title
         try:
@@ -810,6 +1087,39 @@ class CastingService:
                         message=f"匹配分数 {confidence:.2f}，建议试听后再继续。",
                     )
                 return {**outcome, "status": "reused"}
+            # 多年龄阶段先复用同一角色已有的声线，避免基础形态与阶段各自新建。
+            own = self._pick_character_actor(book_id, target)
+            if own is not None:
+                actor_id, confidence, reason = own
+                self._prepare_actor_reference(actor_id)
+                outcome = self._create_cast(
+                    book_id,
+                    target,
+                    actor_id,
+                    source="auto",
+                    confidence=confidence,
+                    reason=reason,
+                    job_id=job_id,
+                )
+                if outcome.get("status") != "skipped":
+                    return {**outcome, "status": "reused"}
+            # 通用目录是可跨书复用的基础声线池；没有空闲适配预设时才回退书籍专属。
+            general = self._materialize_general_actor(target)
+            if general is not None:
+                actor_id, confidence, reason = general
+                self._prepare_actor_reference(actor_id)
+                outcome = self._create_cast(
+                    book_id,
+                    target,
+                    actor_id,
+                    source="auto",
+                    confidence=confidence,
+                    reason=reason,
+                    job_id=job_id,
+                )
+                if outcome.get("status") == "skipped":
+                    return outcome
+                return {**outcome, "status": "generated"}
             # 次要角色不单独设计声线：优先复用已选配音员，且不能与已绑定角色同场出现。
             if not target.dedicated:
                 shared = self._pick_shared_actor(
@@ -863,8 +1173,6 @@ class CastingService:
             if outcome.get("status") == "skipped":
                 return outcome
             return {**outcome, "status": "generated"}
-        except DependencyUnavailableError:
-            raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("自动选角目标失败 %s: %s", target.character_name or target.scope, exc)
             code = str(getattr(exc, "code", "cast_generation_failed"))
@@ -877,8 +1185,148 @@ class CastingService:
                 severity="warning",
                 title=f"“{target.character_name or '旁白'}”选角失败",
                 message=message,
+                category="system",
             )
             return {"status": "failed", "error": message}
+
+    def _migrate_auto_cast_to_general(
+        self, cast: VoiceCast, target: _Target, job_id: str
+    ) -> dict[str, Any] | None:
+        """重跑自动选角时，把旧版自动生成的书籍专属绑定迁移到通用声线。"""
+        general = None
+        reused_general = False
+        with session_scope(self.session_factory) as session:
+            actor = session.get(VoiceActor, cast.voice_actor_id)
+            if not self._is_legacy_auto_book_cast(cast, actor):
+                return None
+            picked = self._pick_actor(
+                session, cast.book_id, target, allow_used=True, only_general=True
+            )
+            picked_actor = session.get(VoiceActor, picked[0]) if picked is not None else None
+            if picked_actor is not None and picked_actor.scope == "general":
+                general = picked
+                reused_general = True
+        if general is None:
+            try:
+                general = self._materialize_general_actor(target)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("旧自动选角迁移通用声线失败 %s: %s", target.character_name, exc)
+                return None
+        if general is None:
+            return None
+        actor_id, confidence, reason = general
+        self._prepare_actor_reference(actor_id)
+        with session_scope(self.session_factory) as session:
+            current = session.get(VoiceCast, cast.id)
+            if current is None or not current.is_active:
+                return None
+            current.is_active = False
+            current.updated_at = utc_now()
+        try:
+            outcome = self._create_cast(
+                cast.book_id,
+                target,
+                actor_id,
+                source="auto",
+                confidence=confidence,
+                reason=f"旧自动专属声线已迁移；{reason}",
+                job_id=job_id,
+            )
+        except Exception:
+            with session_scope(self.session_factory) as session:
+                current = session.get(VoiceCast, cast.id)
+                if current is not None:
+                    current.is_active = True
+                    current.updated_at = utc_now()
+            raise
+        if outcome.get("status") == "skipped":
+            with session_scope(self.session_factory) as session:
+                active = self._cast_for_target(session, cast.book_id, target)
+                if active is not None and active.voice_actor_id == actor_id:
+                    return {
+                        **outcome,
+                        "status": "reused" if reused_general else "generated",
+                        "migrated_from_actor_id": cast.voice_actor_id,
+                    }
+            return None
+        return {
+            **outcome,
+            "status": "reused" if reused_general else "generated",
+            "migrated_from_actor_id": cast.voice_actor_id,
+        }
+
+    @staticmethod
+    def _is_legacy_auto_book_cast(
+        cast: VoiceCast, actor: VoiceActor | None
+    ) -> bool:
+        return bool(
+            cast.source == "auto"
+            and actor is not None
+            and actor.scope == "book"
+            and (actor.generation_params_json or {}).get("auto_cast")
+        )
+
+    def _materialize_general_actor(
+        self, target: _Target
+    ) -> tuple[str, float, str] | None:
+        """按需把兼容的通用预设生成为真实演员，避免空库默认生成书籍专属声线。"""
+        with session_scope(self.session_factory) as session:
+            existing = {
+                str((row.generation_params_json or {}).get("general_preset_id")): row
+                for row in session.scalars(
+                    select(VoiceActor).where(VoiceActor.scope == "general")
+                )
+                if (row.generation_params_json or {}).get("general_preset_id")
+            }
+        target_age = target.age if target.age in AGE_ORDER else "unknown"
+        target_voice_keywords = _voice_keywords(target.description)
+        candidates: list[tuple[float, float, int, int, dict[str, Any]]] = []
+        target_tags = {str(tag).casefold() for tag in target.timbre_tags + target.personality_tags}
+        for order, preset in enumerate(general_voice_presets()):
+            preset_id = str(preset["preset_id"])
+            if preset_id in existing:
+                continue
+            if preset["language"] != target.language:
+                continue
+            if target.gender in {"male", "female"} and preset["gender_presentation"] != target.gender:
+                continue
+            preset_age = str(preset["age_impression"])
+            if target_age != "unknown":
+                distance = abs(AGE_ORDER[target_age] - AGE_ORDER[preset_age])
+                max_distance = 0 if target.scope == "character_stage" else 1
+                if distance > max_distance:
+                    continue
+            else:
+                distance = 1
+            preset_tags = {
+                str(tag).casefold()
+                for tag in list(preset["timbre_tags"]) + list(preset["personality_tags"])
+            }
+            preset_keywords = _voice_keywords(
+                " ".join([str(preset.get("description") or ""), *preset_tags])
+            )
+            overlap = len(target_tags & preset_tags)
+            voice_overlap = len(target_voice_keywords & preset_keywords)
+            # 音色语义优先于枚举顺序；同分时仍优先更接近的年龄段。
+            rank = voice_overlap * 10 + overlap * 2 - distance
+            candidates.append((-rank, -distance, -voice_overlap, order, preset))
+        if not candidates:
+            return None
+        preset = min(candidates, key=lambda item: item[:4])[4]
+        actor = self.generate_general_preset(str(preset["preset_id"]))
+        if actor.scope != "general" or actor.status != "ready":
+            return None
+        preset_keywords = _voice_keywords(
+            " ".join([str(preset.get("description") or ""), *list(preset["timbre_tags"]) + list(preset["personality_tags"])])
+        )
+        voice_match = bool(target_voice_keywords & preset_keywords)
+        confidence = 0.92 if target.age == preset["age_impression"] and voice_match else 0.86 if target.age == preset["age_impression"] else 0.68
+        return (
+            actor.id,
+            confidence,
+            f"通用声线优先：已生成并绑定预设 {preset['display_name']}"
+            + ("，音色描述匹配" if voice_match else "，年龄段兼容"),
+        )
 
     def _generate_actor(
         self, book_id: str, book_title: str, target: _Target
@@ -951,6 +1399,7 @@ class CastingService:
                 duration_ms=info["duration_ms"],
                 status="ready",
                 source="ai",
+                scope="book",
                 source_book_id=book_id,
                 is_favorite=False,
                 created_at=utc_now(),
@@ -978,6 +1427,11 @@ class CastingService:
             actor = self._actor(session, actor_id)
             if actor.status != "ready":
                 raise ConflictError("生成的配音员没有就绪", code="cast_actor_not_ready")
+            if actor.scope == "book" and actor.source_book_id != book.id:
+                raise ConflictError(
+                    "书籍专属配音员不能跨书绑定",
+                    code="actor_book_scope_violation",
+                )
             self._actor_file(actor)
             cast = VoiceCast(
                 id=new_id("cast"),
@@ -1009,7 +1463,13 @@ class CastingService:
     # -------------------------------------------------------------- matching
 
     def _pick_actor(
-        self, session: Session, book_id: str, target: _Target
+        self,
+        session: Session,
+        book_id: str,
+        target: _Target,
+        *,
+        allow_used: bool = False,
+        only_general: bool = False,
     ) -> tuple[str, float, str] | None:
         used = self._used_actor_ids(session, book_id)
         rows = list(
@@ -1017,12 +1477,18 @@ class CastingService:
                 select(VoiceActor).where(
                     VoiceActor.status == "ready",
                     VoiceActor.reference_audio_path.is_not(None),
+                    or_(
+                        VoiceActor.scope == "general",
+                        VoiceActor.source_book_id == book_id,
+                    ),
                 )
             )
         )
-        best: tuple[float, VoiceActor] | None = None
+        best: tuple[float, float, VoiceActor] | None = None
         for actor in rows:
-            if actor.id in used:
+            if only_general and actor.scope != "general":
+                continue
+            if actor.id in used and not allow_used:
                 continue
             try:
                 self._actor_file(actor)
@@ -1031,18 +1497,71 @@ class CastingService:
             score = self._score_actor(target, actor)
             if score is None:
                 continue
-            if best is None or score > best[0]:
-                best = (score, actor)
+            # 通用声线只作为轻微偏好，不能压过明显更匹配的书籍专属声线。
+            rank = score + (0.02 if actor.scope == "general" else 0.0)
+            if best is None or (rank, score, actor.is_favorite) > (
+                best[0], best[1], best[2].is_favorite
+            ):
+                best = (rank, score, actor)
         if best is None:
             return None
-        score, actor = best
+        _rank, score, actor = best
         reasons = [
             f"gender={actor.gender_presentation}",
             f"age={actor.age_impression}",
         ]
+        if actor.scope == "general":
+            reasons.append("通用声线优先")
         if actor.is_favorite:
             reasons.append("已收藏")
-        return actor.id, round(score, 3), "复用历史配音员：" + "，".join(reasons)
+        prefix = "复用通用配音员：" if actor.scope == "general" else "复用本书专属配音员："
+        return actor.id, round(score, 3), prefix + "，".join(reasons)
+
+    def _pick_character_actor(
+        self, book_id: str, target: _Target
+    ) -> tuple[str, float, str] | None:
+        if not target.character_id:
+            return None
+        with session_scope(self.session_factory) as session:
+            casts = list(
+                session.scalars(
+                    select(VoiceCast).where(
+                        VoiceCast.book_id == book_id,
+                        VoiceCast.character_id == target.character_id,
+                        VoiceCast.is_active.is_(True),
+                    ).order_by(VoiceCast.priority.desc(), VoiceCast.updated_at.desc())
+                )
+            )
+            for cast in casts:
+                actor = self._actor(session, cast.voice_actor_id)
+                if target.age != "unknown" and actor.age_impression != target.age:
+                    continue
+                if actor.scope == "book" and actor.source_book_id != book_id:
+                    continue
+                try:
+                    self._actor_file(actor)
+                except (NotFoundError, AppError):
+                    continue
+                return (
+                    actor.id,
+                    0.9,
+                    "复用该角色已有声线，保持跨年龄阶段的声音辨识度",
+                )
+        return None
+
+    @staticmethod
+    def _hard_voice_mismatch(target: _Target, actor: VoiceActor) -> bool:
+        """自动绑定必须满足的性别、年龄和阶段硬约束。"""
+        if target.gender in {"male", "female"} and actor.gender_presentation in {"male", "female"}:
+            if actor.gender_presentation != target.gender:
+                return True
+        target_age = target.age if target.age in AGE_ORDER else "unknown"
+        actor_age = actor.age_impression if actor.age_impression in AGE_ORDER else "unknown"
+        if target_age != "unknown" and actor_age != "unknown":
+            distance = abs(AGE_ORDER[target_age] - AGE_ORDER[actor_age])
+            if distance > (0 if target.scope == "character_stage" else 1):
+                return True
+        return False
 
     def _score_actor(self, target: _Target, actor: VoiceActor) -> float | None:
         score = 0.0
@@ -1071,10 +1590,13 @@ class CastingService:
         actor_age = actor.age_impression if actor.age_impression in AGE_ORDER else "unknown"
         if target_age != "unknown":
             if actor_age == "unknown":
+                if target.scope == "character_stage":
+                    return None
                 score += 0.04
             else:
                 distance = abs(AGE_ORDER[target_age] - AGE_ORDER[actor_age])
-                if distance > 2:
+                max_distance = 0 if target.scope == "character_stage" else 1
+                if distance > max_distance:
                     return None
                 score += 0.28 if distance == 0 else 0.12 if distance == 1 else 0.0
         else:
@@ -1094,6 +1616,19 @@ class CastingService:
         }
         if target_tags and actor_tags:
             score += 0.14 * (len(target_tags & actor_tags) / len(target_tags))
+        target_voice_keywords = _voice_keywords(target.description)
+        actor_voice_keywords = _voice_keywords(
+            " ".join([
+                str(actor.description or ""),
+                *list(actor.timbre_tags_json or []),
+                *list(actor.personality_tags_json or []),
+            ])
+        )
+        if target_voice_keywords:
+            score += 0.26 * (
+                len(target_voice_keywords & actor_voice_keywords)
+                / len(target_voice_keywords)
+            )
         if actor.is_favorite:
             score += 0.04
         if score < REUSE_THRESHOLD:
@@ -1143,6 +1678,10 @@ class CastingService:
                     select(VoiceActor).where(
                         VoiceActor.status == "ready",
                         VoiceActor.reference_audio_path.is_not(None),
+                        or_(
+                            VoiceActor.scope == "general",
+                            VoiceActor.source_book_id == book_id,
+                        ),
                     )
                 )
             )
@@ -1209,16 +1748,15 @@ class CastingService:
         active_casts = self._active_casts(session, book_id)
         cast_map = self._cast_map(active_casts)
         targets: list[_Target] = []
-        if not any(cast.scope == "narrator" for cast in active_casts):
-            targets.append(
-                _Target(
-                    scope="narrator",
-                    description=self.settings.voice_design.narrator_description,
-                    gender="unknown",
-                    age="adult",
-                    timbre_tags=["旁白", "叙述"],
-                )
+        targets.append(
+            _Target(
+                scope="narrator",
+                description=self.settings.voice_design.narrator_description,
+                gender="unknown",
+                age="adult",
+                timbre_tags=["旁白", "叙述"],
             )
+        )
         characters = self._plan_characters(session, book_id, bible)
         multi_stage: set[str] = set()
         for item in characters:
@@ -1231,12 +1769,9 @@ class CastingService:
                 # 直接复用其中一条阶段声线，避免同一个人多出一把嗓子。
                 multi_stage.add(character.id)
                 for stage in stages:
-                    key = ("character_stage", character.id, stage["age_stage"])
-                    if key not in cast_map:
-                        targets.append(stage["target"])
-                if ("character", character.id, None) not in cast_map:
-                    targets.append(item["base_target"])
-            elif ("character", character.id, None) not in cast_map:
+                    targets.append(stage["target"])
+                targets.append(item["base_target"])
+            else:
                 targets.append(item["base_target"])
         appearances = self._appearance_map(session, book_id, bible)
         dedicated = self._dedicated_character_ids(session, book_id, appearances)
@@ -1251,7 +1786,22 @@ class CastingService:
                     and target.character_id in multi_stage
                 )
             )
-        return targets
+        actor_ids = [cast.voice_actor_id for cast in active_casts if cast.voice_actor_id]
+        actors = {
+            actor.id: actor
+            for actor in session.scalars(
+                select(VoiceActor).where(VoiceActor.id.in_(actor_ids))
+            )
+        } if actor_ids else {}
+        pending: list[_Target] = []
+        for target in targets:
+            key = (target.scope, target.character_id, target.age_stage)
+            cast = cast_map.get(key)
+            if cast is None or self._is_legacy_auto_book_cast(
+                cast, actors.get(cast.voice_actor_id)
+            ):
+                pending.append(target)
+        return pending
 
     def _appearance_map(
         self, session: Session, book_id: str, bible: BookBible
@@ -1414,6 +1964,15 @@ class CastingService:
         )
         return result
 
+    @staticmethod
+    def _arc_stage_eligible(arc: CharacterArc) -> bool:
+        traits = arc.voice_traits_json or {}
+        return (
+            arc.source == "user"
+            or bool(traits.get("age_stage_explicit"))
+            or traits.get("age_stage_basis") in {"evidence", "non_present"}
+        )
+
     def _character_stages(
         self,
         character: Character,
@@ -1421,8 +1980,17 @@ class CastingService:
         states: list[SceneCharacter],
     ) -> list[dict[str, Any]]:
         found: dict[str, dict[str, Any]] = {}
+        eligible_ages = {
+            arc.age_stage for arc in arcs if self._arc_stage_eligible(arc)
+        }
+        if character.age_range in AGE_ORDER:
+            eligible_ages.add(character.age_range)
         for arc in arcs:
-            if arc.age_stage in AGE_ORDER and arc.age_stage != "unknown":
+            if (
+                arc.age_stage in AGE_ORDER
+                and arc.age_stage != "unknown"
+                and self._arc_stage_eligible(arc)
+            ):
                 hint = _clean(
                     (arc.voice_traits_json or {}).get("voice_hint")
                     or (arc.voice_traits_json or {}).get("description"),
@@ -1437,7 +2005,11 @@ class CastingService:
                     },
                 )
         for state in states:
-            if state.age_stage in AGE_ORDER and state.age_stage != "unknown":
+            if (
+                state.age_stage in AGE_ORDER
+                and state.age_stage != "unknown"
+                and state.age_stage in eligible_ages
+            ):
                 found.setdefault(
                     state.age_stage,
                     {
@@ -1478,6 +2050,7 @@ class CastingService:
             timbre_tags=[
                 _age_label(character.age_range),
                 character.role_tier,
+                *sorted(_voice_keywords(character.voice_description or "")),
             ],
             personality_tags=_clean_tags(character.personality_json, 8),
             voice_note=_clean(note, 300),
@@ -1523,6 +2096,9 @@ class CastingService:
                 _age_label(age_stage),
                 stage["label"],
                 character.role_tier,
+                *sorted(_voice_keywords(
+                    " ".join([character.voice_description or "", hint or ""])
+                )),
             ],
             personality_tags=_clean_tags(character.personality_json, 8),
             voice_note=_clean(note, 300),
@@ -1642,6 +2218,8 @@ class CastingService:
                 personality_tags=list(actor.personality_tags_json or []),
                 is_favorite=actor.is_favorite,
                 is_mock=_actor_is_mock(actor),
+                scope=actor.scope,
+                source_book_id=actor.source_book_id,
                 audio_url=f"/api/v1/voice-actors/{actor.id}/audio",
             )
             if actor
@@ -1665,6 +2243,7 @@ class CastingService:
             return 0
         casts = self._active_casts(session, book_id)
         cast_map = self._cast_map(casts)
+        cast_by_id = {cast.id: cast for cast in casts}
         units = list(
             session.scalars(
                 select(ScriptUnit).where(
@@ -1672,6 +2251,15 @@ class CastingService:
                 )
             )
         )
+        previous_cast_ids = {
+            unit.voice_cast_id for unit in units if unit.voice_cast_id
+        }
+        previous_actors = {
+            cast.id: cast.voice_actor_id
+            for cast in session.scalars(
+                select(VoiceCast).where(VoiceCast.id.in_(previous_cast_ids))
+            )
+        } if previous_cast_ids else {}
         state_ids = {
             unit.character_state_id
             for unit in units
@@ -1703,10 +2291,12 @@ class CastingService:
                         desired = base.id if base else None
             if unit.voice_cast_id == desired:
                 continue
+            desired_actor = cast_by_id.get(desired).voice_actor_id if desired else None
             if (
                 unit.audio_status == "ready"
                 and unit.current_audio_asset_id
                 and unit.voice_cast_id != desired
+                and previous_actors.get(unit.voice_cast_id or "") != desired_actor
             ):
                 unit.audio_status = "stale"
             unit.voice_cast_id = desired
@@ -1842,6 +2432,7 @@ class CastingService:
         title: str,
         message: str | None,
         payload: dict[str, Any],
+        category: str = "content",
     ) -> ReviewItem:
         existing = session.scalar(
             select(ReviewItem).where(
@@ -1864,6 +2455,7 @@ class CastingService:
                 message=message,
                 payload_json=payload,
                 status="open",
+                category=category,
                 source="system",
                 created_at=utc_now(),
                 updated_at=utc_now(),
@@ -1875,6 +2467,7 @@ class CastingService:
         existing.title = title[:255]
         existing.message = message
         existing.payload_json = payload
+        existing.category = category
         existing.updated_at = utc_now()
         return existing
 
@@ -1888,6 +2481,7 @@ class CastingService:
         severity: str,
         title: str,
         message: str,
+        category: str = "content",
     ) -> None:
         with session_scope(self.session_factory) as session:
             if target.scope == "narrator":
@@ -1915,6 +2509,7 @@ class CastingService:
                     "character_id": target.character_id,
                     "age_stage": target.age_stage,
                 },
+                category=category,
             )
 
     def _resolve_owner_reviews(
@@ -2021,6 +2616,7 @@ class CastingService:
             title="自动选角任务失败",
             message=message,
             payload={"job_id": job.id, "error_code": code},
+            category="system",
         )
 
     # ---------------------------------------------------------------- helpers
@@ -2163,6 +2759,7 @@ class CastingService:
                 "raw_reference_path",
                 "deess",
                 "auto_cast",
+                "general_preset_id",
             )
             if key in params
         }
@@ -2185,6 +2782,7 @@ class CastingService:
             duration_ms=actor.duration_ms,
             status=actor.status,
             source=actor.source,
+            scope=actor.scope,
             source_book_id=actor.source_book_id,
             is_favorite=actor.is_favorite,
             is_mock=_actor_is_mock(actor),
@@ -2352,6 +2950,7 @@ def recover_interrupted_casting(session: Session) -> dict[str, int]:
                         message="应用重启时任务尚未完成，请重新启动自动选角。",
                         payload_json={"job_id": job.id, "error_code": "interrupted"},
                         status="open",
+                        category="system",
                         source="system",
                         created_at=now,
                         updated_at=now,

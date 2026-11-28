@@ -69,7 +69,7 @@ export const THEME_PALETTES: Record<ResolvedTheme, ThemePalette> = {
     focusRing: '#e7b85c',
     success: '#86b593',
     warning: '#e7b85c',
-    danger: '#d98d7c',
+    danger: '#dd9989',
     info: '#83a9c6',
     scrollbarThumb: '#4e5b69',
     scrollbarThumbHover: '#637183',

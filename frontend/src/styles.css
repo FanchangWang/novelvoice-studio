@@ -62,7 +62,7 @@ html[data-theme="dark"] {
   --focus-ring: #e7b85c;
   --success: #86b593;
   --warning: #e7b85c;
-  --danger: #d98d7c;
+  --danger: #dd9989;
   --info: #83a9c6;
 
   --grid-line: rgba(255, 255, 255, 0.045);
@@ -195,10 +195,17 @@ html[data-theme="dark"] {
     font-family: inherit;
   }
 
-  :where(a, button, [role="button"], [tabindex]):focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
+  /* Naive UI 与原生控件的 outline 重置可能覆盖低特异度的全局规则；
+     焦点必须稳定可见，不能被组件库的默认样式吞掉。 */
+  :where(a, button, input, textarea, select, summary, [role="button"], [tabindex]):focus-visible {
+    outline: 2px solid var(--focus-ring) !important;
+    outline-offset: 2px !important;
   }
+}
+
+.nv-focus:focus-visible {
+  outline: 2px solid var(--focus-ring) !important;
+  outline-offset: 2px !important;
 }
 
 /* 可读性下限：页面里不再出现 8–13px 的功能文字，密集元数据也至少 14px。
@@ -260,11 +267,6 @@ html[data-theme="dark"] {
 .nv-card-hover:hover {
   border-color: color-mix(in srgb, var(--accent) 52%, var(--border));
   background: var(--surface-hover);
-}
-
-.nv-focus:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
 }
 
 .nv-brand-mark {
@@ -366,4 +368,40 @@ html[data-theme="dark"] {
 
 .n-base-close:hover {
   background: var(--surface-hover);
+}
+
+@media (forced-colors: active) {
+  html,
+  body,
+  .nv-card {
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .nv-card,
+  .n-base-close,
+  button,
+  input,
+  textarea,
+  select,
+  summary {
+    border: 1px solid CanvasText;
+  }
+
+  :where(a, button, input, textarea, select, summary, [role="button"], [tabindex]):focus-visible,
+  .nv-focus:focus-visible {
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

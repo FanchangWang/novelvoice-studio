@@ -32,7 +32,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     try {
       const [bookResponse, chapterResponse] = await Promise.all([
         api.getBook(bookId),
-        api.listChapters(bookId),
+        api.listChapters(bookId, { pageSize: 100 }),
       ])
       if (token !== bookToken) {
         return
@@ -89,7 +89,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (!book.value) {
       return
     }
-    const response = await api.listChapters(book.value.id)
+    const response = await api.listChapters(book.value.id, { pageSize: 100 })
     chapters.value = response.items
   }
 
@@ -97,7 +97,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     if (!current.value) {
       return
     }
-    const updated = await api.updateChapter(current.value.id, title)
+    const updated = await api.updateChapter(current.value.id, { title })
     current.value = {
       ...current.value,
       title: updated.title,

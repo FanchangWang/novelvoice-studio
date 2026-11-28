@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import threading
 import time
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
+
+from novelvoice_studio.ai.registry import ProviderRegistry
 
 from novelvoice_studio.db.types import utc_now
 from novelvoice_studio.models import (
@@ -20,6 +23,8 @@ from novelvoice_studio.models import (
 )
 from novelvoice_studio.services.casting import (
     CastingService,
+    _Target,
+    general_voice_presets,
     recover_interrupted_casting,
 )
 from novelvoice_studio.services.paths import new_id
@@ -206,6 +211,18 @@ def test_voice_actor_lifecycle(client: TestClient) -> None:
 def test_auto_casting_assigns_units_and_reuses_narrator(
     client: TestClient, upload, sample_text: str, monkeypatch
 ) -> None:
+    general = client.post(
+        "/api/v1/voice-actors",
+        json={
+            "display_name": "通用旁白",
+            "description": "成年中性声，平稳、清楚、自然的叙述音色",
+            "gender_presentation": "neutral",
+            "age_impression": "adult",
+            "timbre_tags": ["旁白", "叙述", "平稳"],
+        },
+    )
+    assert general.status_code == 201, general.text
+    general_actor_id = general.json()["id"]
     book_id, chapter = _prepare_book(client, upload, sample_text, title="自动选角")
     assert chapter is not None
 
@@ -238,6 +255,9 @@ def test_auto_casting_assigns_units_and_reuses_narrator(
     narrator_cast = plan["narrator"]
     narrator_actor = narrator_cast["actor"]
     assert narrator_cast["source"] == "auto"
+    assert narrator_actor["id"] == general_actor_id
+    assert narrator_actor["scope"] == "general"
+    assert "通用声线优先" in narrator_cast["reason"]
     assert narrator_actor["is_mock"] is True
     assert client.get(narrator_actor["audio_url"]).status_code == 200
 
@@ -442,6 +462,24 @@ def test_stage_cast_created_from_character_arc(
                 updated_at=utc_now(),
             )
         )
+        session.add(
+            CharacterArc(
+                id=new_id("arc"),
+                book_id=book_id,
+                bible_id=bible.id,
+                character_id=speaker_id,
+                arc_index=100,
+                label="成年",
+                age_stage="adult",
+                traits_json=[],
+                appearance_json={},
+                voice_traits_json={"description": "成年声线"},
+                confidence=0.9,
+                source="user",
+                created_at=utc_now(),
+                updated_at=utc_now(),
+            )
+        )
         session.commit()
 
     assert _start_casting(client, book_id).status_code == 202
@@ -459,6 +497,131 @@ def test_stage_cast_created_from_character_arc(
     assert all(row["cast"] is not None for row in stages.values())
     assert stages["child"]["cast"]["actor"]["age_impression"] == "child"
     assert stages["adult"]["cast"]["actor"]["age_impression"] == "adult"
+
+
+def test_unconfirmed_age_drift_uses_one_character_voice(
+    client: TestClient, upload, sample_text: str, session_factory
+) -> None:
+    book_id, chapter = _prepare_book(client, upload, sample_text, title="连续时间选角")
+    assert chapter is not None
+    with session_factory() as session:
+        bible = session.scalar(
+            select(BookBible).where(
+                BookBible.book_id == book_id, BookBible.is_active.is_(True)
+            )
+        )
+        assert bible is not None
+        character = session.scalar(
+            select(Character)
+            .join(CharacterArc, CharacterArc.character_id == Character.id)
+            .where(Character.book_id == book_id)
+            .limit(1)
+        )
+        assert character is not None
+        canonical_age = character.age_range
+        arcs = list(
+            session.scalars(
+                select(CharacterArc).where(
+                    CharacterArc.bible_id == bible.id,
+                    CharacterArc.character_id == character.id,
+                )
+            )
+        )
+        for arc in arcs:
+            arc.source = "ai"
+            arc.voice_traits_json = {
+                "age_stage": arc.age_stage,
+                "age_stage_explicit": False,
+                "age_stage_basis": "canonical",
+            }
+        state = session.scalar(
+            select(SceneCharacter).where(SceneCharacter.character_id == character.id)
+        )
+        if state is not None:
+            state.age_stage = "adult" if canonical_age != "adult" else "elderly"
+        session.add(
+            CharacterArc(
+                id=new_id("arc"),
+                book_id=book_id,
+                bible_id=bible.id,
+                character_id=character.id,
+                arc_index=100,
+                label="事件发起",
+                age_stage="adult" if canonical_age != "adult" else "elderly",
+                traits_json=[],
+                appearance_json={},
+                voice_traits_json={
+                    "age_stage_explicit": False,
+                    "age_stage_basis": "canonical",
+                },
+                confidence=0.9,
+                source="ai",
+                created_at=utc_now(),
+                updated_at=utc_now(),
+            )
+        )
+        session.commit()
+
+    assert _start_casting(client, book_id).status_code == 202
+    status = _wait_casting(client, book_id)
+    assert status["job"]["status"] == "completed", status
+    plan = _casts(client, book_id)
+    item = next(
+        row for row in plan["characters"] if row["character_id"] == character.id
+    )
+    assert {stage["age_stage"] for stage in item["stages"]} <= {canonical_age}
+    assert item["base_cast"] is not None
+    synced = client.get(f"/api/v1/chapters/{chapter['id']}/script").json()
+    character_units = [
+        unit
+        for unit in synced["units"]
+        if unit["speaker_type"] == "character" and unit["speaker_id"] == character.id
+    ]
+    assert character_units
+    assert {unit["voice_cast_id"] for unit in character_units} == {item["base_cast"]["id"]}
+
+
+def test_auto_resume_detects_unconfirmed_stage_cast(
+    client: TestClient, upload, sample_text: str, session_factory
+) -> None:
+    book_id, _chapter = _prepare_book(
+        client, upload, sample_text, title="伪阶段续作检测", with_scene_script=False
+    )
+    assert _start_casting(client, book_id).status_code == 202
+    status = _wait_casting(client, book_id)
+    assert status["job"]["status"] == "completed", status
+    with session_factory() as session:
+        base = session.scalar(
+            select(VoiceCast).where(
+                VoiceCast.book_id == book_id,
+                VoiceCast.scope == "character",
+                VoiceCast.is_active.is_(True),
+            )
+        )
+        assert base is not None and base.character_id is not None
+        character = session.get(Character, base.character_id)
+        assert character is not None
+        invalid_age = "adult" if character.age_range != "adult" else "elderly"
+        session.add(VoiceCast(
+            id=new_id("cast"),
+            book_id=book_id,
+            character_id=character.id,
+            voice_actor_id=base.voice_actor_id,
+            scope="character_stage",
+            age_stage_condition=invalid_age,
+            source="auto",
+            confidence=0.9,
+            is_active=True,
+            reason="测试：无证据的旧阶段声线",
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        ))
+        session.commit()
+
+    service = CastingService(
+        client.app.state.settings, session_factory, client.app.state.registry
+    )
+    assert service.has_incompatible_auto_casts(book_id) is True
 
 
 def test_casting_generation_failure_enters_inbox(
@@ -539,3 +702,270 @@ def test_recover_interrupted_casting(client: TestClient, upload, sample_text: st
             )
         )
         assert review is not None
+
+
+def test_general_voice_presets_are_complete_and_idempotent(client: TestClient) -> None:
+    catalog = client.get("/api/v1/voice-actors/general-presets")
+    assert catalog.status_code == 200, catalog.text
+    result = catalog.json()
+    assert result["total"] == 36
+    assert len({item["preset_id"] for item in result["items"]}) == 36
+    assert {item["age_impression"] for item in result["items"]} == {
+        "child", "teenager", "young_adult", "adult", "middle_aged", "elderly"
+    }
+    assert sum(item["gender_presentation"] == "male" for item in result["items"]) == 18
+    assert result["ready_count"] == 0
+
+    preset_id = result["items"][0]["preset_id"]
+    generated = client.post(f"/api/v1/voice-actors/general-presets/{preset_id}/generate")
+    assert generated.status_code == 201, generated.text
+    actor = generated.json()
+    assert actor["scope"] == "general"
+    assert actor["source_book_id"] is None
+    assert actor["generation_params"]["general_preset_id"] == preset_id
+    repeated = client.post(f"/api/v1/voice-actors/general-presets/{preset_id}/generate")
+    assert repeated.status_code == 201
+    assert repeated.json()["id"] == actor["id"]
+    refreshed = client.get("/api/v1/voice-actors/general-presets").json()
+    assert refreshed["ready_count"] == 1
+    assert refreshed["items"][0]["actor_id"] == actor["id"]
+
+
+def test_empty_library_auto_casting_materializes_general_presets(
+    client: TestClient, upload, sample_text: str, session_factory
+) -> None:
+    book_id, _chapter = _prepare_book(client, upload, sample_text, title="空库通用选角")
+    assert _start_casting(client, book_id).status_code == 202
+    status = _wait_casting(client, book_id)
+    assert status["job"]["status"] == "completed", status
+
+    with session_factory() as session:
+        actors = list(session.scalars(select(VoiceActor)))
+        assert actors
+        assert all(actor.scope == "general" for actor in actors)
+        assert all((actor.generation_params_json or {}).get("general_preset_id") for actor in actors)
+        assert all(actor.source_book_id is None for actor in actors)
+    plan = _casts(client, book_id)
+    assert plan["narrator"]["actor"]["scope"] == "general"
+    assert all(
+        row["base_cast"]["actor"]["scope"] == "general"
+        for row in plan["characters"]
+        if row["base_cast"] is not None
+    )
+
+
+def test_ready_general_catalog_is_reused_without_voice_design(
+    client: TestClient, upload, sample_text: str, monkeypatch
+) -> None:
+    catalog = client.get("/api/v1/voice-actors/general-presets").json()["items"]
+    for preset in catalog:
+        response = client.post(f"/api/v1/voice-actors/general-presets/{preset['preset_id']}/generate")
+        assert response.status_code == 201, response.text
+
+    def unexpected_design(self, *args, **kwargs):
+        raise AssertionError("通用声线已就绪，自动选角不应再次调用声音设计")
+
+    monkeypatch.setattr(CastingService, "_design_voice", unexpected_design)
+    book_id, _chapter = _prepare_book(client, upload, sample_text, title="通用声线复用")
+    assert _start_casting(client, book_id).status_code == 202
+    status = _wait_casting(client, book_id)
+    assert status["job"]["status"] == "completed", status
+    assert status["job"]["result"]["generated"] == 0
+    assert status["job"]["result"]["reused"] > 0
+    assert _casts(client, book_id)["narrator"]["actor"]["scope"] == "general"
+
+
+def test_rerun_casting_migrates_old_auto_book_voices_to_general(
+    client: TestClient, upload, sample_text: str, monkeypatch, session_factory
+) -> None:
+    book_id, _chapter = _prepare_book(client, upload, sample_text, title="旧专属声线迁移")
+    monkeypatch.setattr("novelvoice_studio.services.casting.general_voice_presets", lambda: [])
+    assert _start_casting(client, book_id).status_code == 202
+    first = _wait_casting(client, book_id)
+    assert first["job"]["status"] == "completed", first
+    with session_factory() as session:
+        old_actor_ids = {
+            row.voice_actor_id
+            for row in session.scalars(
+                select(VoiceCast).where(
+                    VoiceCast.book_id == book_id,
+                    VoiceCast.is_active.is_(True),
+                )
+            )
+        }
+        old_actors = list(session.scalars(select(VoiceActor).where(VoiceActor.id.in_(old_actor_ids))))
+        assert old_actors
+        assert all(actor.scope == "book" for actor in old_actors)
+
+    monkeypatch.setattr("novelvoice_studio.services.casting.general_voice_presets", general_voice_presets)
+    catalog = client.get("/api/v1/voice-actors/general-presets").json()["items"]
+    for preset in catalog:
+        generated = client.post(f"/api/v1/voice-actors/general-presets/{preset['preset_id']}/generate")
+        assert generated.status_code == 201, generated.text
+    assert _start_casting(client, book_id).status_code == 202
+    second = _wait_casting(client, book_id)
+    assert second["job"]["status"] == "completed", second
+    assert second["job"]["result"]["generated"] == 0
+    assert second["job"]["result"]["reused"] > 0
+    plan = _casts(client, book_id)
+    assert plan["narrator"]["actor"]["scope"] == "general"
+    assert all(
+        row["base_cast"]["actor"]["scope"] == "general"
+        for row in plan["characters"]
+        if row["base_cast"] is not None
+    )
+    with session_factory() as session:
+        active_actor_ids = {
+            row.voice_actor_id
+            for row in session.scalars(
+                select(VoiceCast).where(
+                    VoiceCast.book_id == book_id,
+                    VoiceCast.is_active.is_(True),
+                )
+            )
+        }
+        active_actors = list(session.scalars(select(VoiceActor).where(VoiceActor.id.in_(active_actor_ids))))
+        assert active_actor_ids.isdisjoint(old_actor_ids)
+        assert all(actor.scope == "general" for actor in active_actors)
+        retained_actors = list(session.scalars(select(VoiceActor).where(VoiceActor.id.in_(old_actor_ids))))
+        historical_casts = list(
+            session.scalars(select(VoiceCast).where(VoiceCast.voice_actor_id.in_(old_actor_ids)))
+        )
+        assert len(retained_actors) == len(old_actor_ids)
+        assert historical_casts
+        assert all(not cast.is_active for cast in historical_casts)
+
+
+def test_detects_incompatible_existing_auto_cast(app, db_session, upload, sample_text, monkeypatch) -> None:
+    book_id = _import_sample(upload, sample_text)
+    service = CastingService(app.state.settings, app.state.session_factory, ProviderRegistry(app.state.settings))
+    target = _Target(scope="character", description="成年男性", gender="male", age="adult")
+    actor = VoiceActor(
+        id="va_0000000000000001", display_name="少年男", description="少年男声",
+        gender_presentation="male", age_impression="teenager", language="zh-CN",
+        timbre_tags_json=[], personality_tags_json=[],
+    )
+    cast = SimpleNamespace(source="auto", voice_actor_id=actor.id)
+    db_session.add(actor)
+    db_session.commit()
+    monkeypatch.setattr(service, "_active_bible", lambda *_args: SimpleNamespace(status="approved"))
+    monkeypatch.setattr(service, "_targets", lambda *_args: [target])
+    monkeypatch.setattr(service, "_cast_for_target", lambda *_args: cast)
+
+    assert service.has_incompatible_auto_casts(book_id) is True
+    cast.source = "user"
+    assert service.has_incompatible_auto_casts(book_id) is False
+
+
+def test_actor_matching_rejects_teen_voice_for_adult_and_uses_timbre() -> None:
+    service = object.__new__(CastingService)
+    target = _Target(scope="character", description="低沉威严的成年男性", gender="male", age="adult")
+    teen = VoiceActor(
+        id="va_0000000000000001", display_name="少年男", description="少年男声，低柔",
+        gender_presentation="male", age_impression="teenager", language="zh-CN",
+        timbre_tags_json=["低沉"], personality_tags_json=[],
+    )
+    adult = VoiceActor(
+        id="va_0000000000000002", display_name="成年男", description="成年男声，低沉威严",
+        gender_presentation="male", age_impression="adult", language="zh-CN",
+        timbre_tags_json=["低沉", "威严"], personality_tags_json=[],
+    )
+    plain = VoiceActor(
+        id="va_0000000000000003", display_name="普通成年男", description="成年男声",
+        gender_presentation="male", age_impression="adult", language="zh-CN",
+        timbre_tags_json=[], personality_tags_json=[],
+    )
+
+    assert service._score_actor(target, teen) is None
+    assert service._hard_voice_mismatch(target, teen) is True
+    assert service._score_actor(target, adult) > service._score_actor(target, plain)
+
+
+def test_rerun_casting_preserves_manual_book_voice(
+    client: TestClient, upload, sample_text: str
+) -> None:
+    book_id, _chapter = _prepare_book(client, upload, sample_text, title="手动声线保留")
+    created = client.post(
+        "/api/v1/voice-actors",
+        json={
+            "display_name": "用户指定专属声线",
+            "description": "用户手动指定的低沉沙哑男声",
+            "gender_presentation": "male",
+            "age_impression": "adult",
+            "source_book_id": book_id,
+        },
+    )
+    assert created.status_code == 201, created.text
+    actor = created.json()
+    character_id = _casts(client, book_id)["characters"][0]["character_id"]
+    assigned = client.post(
+        f"/api/v1/books/{book_id}/casts/assign",
+        json={
+            "scope": "character",
+            "character_id": character_id,
+            "voice_actor_id": actor["id"],
+        },
+    )
+    assert assigned.status_code == 200, assigned.text
+
+    assert _start_casting(client, book_id).status_code == 202
+    status = _wait_casting(client, book_id)
+    assert status["job"]["status"] == "completed", status
+    plan = _casts(client, book_id)
+    assert plan["narrator"]["actor"]["scope"] == "general"
+    selected = next(row for row in plan["characters"] if row["character_id"] == character_id)
+    assert selected["base_cast"]["voice_actor_id"] == actor["id"]
+    assert selected["base_cast"]["actor"]["scope"] == "book"
+    assert selected["base_cast"]["source"] == "manual"
+
+
+def test_auto_casting_falls_back_to_book_voice_without_compatible_preset(
+    client: TestClient, upload, sample_text: str, monkeypatch, session_factory
+) -> None:
+    book_id, _chapter = _prepare_book(client, upload, sample_text, title="专属声线回退")
+    monkeypatch.setattr("novelvoice_studio.services.casting.general_voice_presets", lambda: [])
+    assert _start_casting(client, book_id).status_code == 202
+    status = _wait_casting(client, book_id)
+    assert status["job"]["status"] == "completed", status
+    with session_factory() as session:
+        actors = list(session.scalars(select(VoiceActor)))
+        assert actors
+        assert all(actor.scope == "book" and actor.source_book_id == book_id for actor in actors)
+
+
+def test_book_voice_cannot_be_assigned_to_another_book(
+    client: TestClient, upload, sample_text: str
+) -> None:
+    first, _ = _prepare_book(client, upload, sample_text, title="专属声线甲", with_scene_script=False)
+    second, _ = _prepare_book(client, upload, sample_text, title="专属声线乙", with_scene_script=False)
+    created = client.post(
+        "/api/v1/voice-actors",
+        json={
+            "display_name": "甲书专属声线",
+            "description": "特殊角色使用的低沉沙哑男声",
+            "gender_presentation": "male",
+            "age_impression": "adult",
+            "source_book_id": first,
+        },
+    )
+    assert created.status_code == 201, created.text
+    actor = created.json()
+    assert actor["scope"] == "book"
+    character_id = _casts(client, second)["characters"][0]["character_id"]
+    forbidden = client.post(
+        f"/api/v1/books/{second}/casts/assign",
+        json={"scope": "character", "character_id": character_id, "voice_actor_id": actor["id"]},
+    )
+    assert forbidden.status_code == 409
+    assert forbidden.json()["error"]["code"] == "actor_book_scope_violation"
+    visible = client.get("/api/v1/voice-actors", params={"book_id": second, "limit": 200}).json()
+    assert actor["id"] not in {item["id"] for item in visible["items"]}
+    allowed = client.post(
+        f"/api/v1/books/{first}/casts/assign",
+        json={
+            "scope": "character",
+            "character_id": _casts(client, first)["characters"][0]["character_id"],
+            "voice_actor_id": actor["id"],
+        },
+    )
+    assert allowed.status_code == 200, allowed.text

@@ -212,7 +212,7 @@ export interface ScriptVersionOut {
   version: number
   status: string
   adaptation_level: string
-  source_scene_version: number
+  source_scene_version: number | null
   source_hash: string | null
   prompt_version: string | null
   model: string | null
@@ -366,6 +366,7 @@ export interface VoiceActorOut {
   duration_ms: number | null
   status: string
   source: string
+  scope?: 'general' | 'book'
   source_book_id: string | null
   is_favorite: boolean
   is_mock: boolean
@@ -380,6 +381,26 @@ export interface VoiceActorListResponse {
   total: number
   limit: number
   offset: number
+}
+
+export interface GeneralVoicePresetOut {
+  preset_id: string
+  display_name: string
+  description: string
+  gender_presentation: string
+  age_impression: string
+  language: string
+  timbre_tags: string[]
+  personality_tags: string[]
+  seed: number
+  actor_id: string | null
+  actor_status: string | null
+}
+
+export interface GeneralVoicePresetListOut {
+  items: GeneralVoicePresetOut[]
+  ready_count: number
+  total: number
 }
 
 export interface VoiceActorCreatePayload {
@@ -417,6 +438,8 @@ export interface CastActorOut {
   personality_tags: string[]
   is_favorite: boolean
   is_mock: boolean
+  scope?: 'general' | 'book'
+  source_book_id?: string | null
   audio_url: string | null
 }
 
@@ -493,6 +516,10 @@ export interface ProductionChapterOut {
   id: string
   title: string
   sequence: number
+  volume_number: number
+  volume_title: string
+  chapter_kind: 'story' | 'extra' | 'author_note' | 'unclassified'
+  analysis_included: boolean
   char_count: number
   scene_status: string
   scene_version: number
@@ -539,16 +566,45 @@ export interface ProductionOverviewOut {
   chapters: ProductionChapterOut[]
 }
 
+export interface ProductionBatchRequest {
+  stages: Array<'scenes' | 'script'>
+  volume_number?: number | null
+  chapter_ids?: string[]
+  only_missing?: boolean
+  adaptation_level?: 'light' | 'standard' | 'strong'
+}
+
+export interface ReviewLocation {
+  chapter_id?: string | null
+  unit_id?: string
+  unit_index?: number
+  scene_id?: string
+  scene_index?: number
+  character_id?: string
+  character_name?: string
+  quote?: string
+  source_start_offset?: number
+  source_end_offset?: number
+}
+
 export interface ReviewItemOut {
   id: string
   book_id: string
   book_title: string | null
+  chapter_id: string | null
+  chapter_title: string | null
   entity_type: string
   entity_id: string | null
   code: string
+  category: 'content' | 'system'
+  actionable: boolean
   severity: string
   title: string
   message: string | null
+  location: ReviewLocation
+  impact: string
+  recommended_action: string
+  action_type: string
   payload: Record<string, unknown>
   status: string
   source: string

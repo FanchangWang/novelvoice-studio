@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, CheckConstraint, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, Boolean, CheckConstraint, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from novelvoice_studio.db.base import Base
@@ -70,6 +70,18 @@ class Chapter(Base):
             "script_status IN ('not_started','running','completed','needs_review','failed')",
             name="ck_chapters_script_status",
         ),
+        CheckConstraint(
+            "chapter_kind IN ('story','extra','author_note','unclassified')",
+            name="ck_chapters_kind",
+        ),
+        CheckConstraint(
+            "classification_status IN ('ai_suggested','confirmed','unclassified')",
+            name="ck_chapters_classification_status",
+        ),
+        CheckConstraint(
+            "analysis_included IN (0,1)",
+            name="ck_chapters_analysis_included",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -78,6 +90,20 @@ class Chapter(Base):
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    volume_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    volume_title: Mapped[str] = mapped_column(
+        String(255), default="默认卷", nullable=False
+    )
+    chapter_kind: Mapped[str] = mapped_column(
+        String(16), default="story", nullable=False
+    )
+    classification_status: Mapped[str] = mapped_column(
+        String(24), default="ai_suggested", nullable=False
+    )
+    analysis_included: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )
+    source_hash: Mapped[str | None] = mapped_column(String(64), index=True)
     source_start_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     source_end_offset: Mapped[int] = mapped_column(Integer, nullable=False)
     summary: Mapped[str | None] = mapped_column(Text)

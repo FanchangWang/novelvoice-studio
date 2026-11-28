@@ -13,12 +13,15 @@ import {
 } from 'naive-ui'
 
 import { api } from '@/api/client'
-import type { DuplicatePolicy, ImportPreview } from '@/api/types'
+import type { BookSummary, DuplicatePolicy, ImportPreview } from '@/api/types'
 import { useSystemStore } from '@/stores/system'
 import { ENCODING_OPTIONS } from '@/utils/encodings'
 import { errorMessage } from '@/utils/errors'
 import { formatBytes, formatDateTime, formatNumber, truncate } from '@/utils/format'
 
+const props = withDefaults(defineProps<{ initialBookId?: string | null }>(), {
+  initialBookId: null,
+})
 const show = defineModel<boolean>('show', { default: false })
 const emit = defineEmits<{ imported: [bookId: string] }>()
 
@@ -41,9 +44,12 @@ const showAdvanced = ref(false)
 const title = ref('')
 const titleTouched = ref(false)
 const author = ref('')
+const authorTouched = ref(false)
 const description = ref('')
+const descriptionTouched = ref(false)
 const duplicatePolicy = ref<DuplicatePolicy>('new')
 const replaceBookId = ref<string | null>(null)
+const books = ref<BookSummary[]>([])
 
 let previewToken = 0
 
@@ -93,12 +99,29 @@ const regexDirty = computed(
 )
 
 const duplicate = computed(() => preview.value?.duplicate ?? null)
+const metadata = computed(() => preview.value?.metadata ?? null)
+const targetBook = computed(() =>
+  books.value.find((book) => book.id === replaceBookId.value) ?? null,
+)
+const targetRequired = computed(() =>
+  ['merge', 'replace'].includes(duplicatePolicy.value),
+)
+const isMerging = computed(() => duplicatePolicy.value === 'merge')
+const targetBookOptions = computed(() =>
+  books.value.map((book) => ({
+    value: book.id,
+    label: `${book.title} · ${book.chapter_count} 章`,
+  })),
+)
 
 const canImport = computed(() => {
   if (!preview.value || busy.value || importing.value || regexDirty.value) {
     return false
   }
   if (duplicate.value && duplicatePolicy.value === 'reject') {
+    return false
+  }
+  if (targetRequired.value && !replaceBookId.value) {
     return false
   }
   return true
@@ -113,6 +136,12 @@ const footerHint = computed(() => {
   }
   if (duplicate.value && duplicatePolicy.value === 'reject') {
     return '检测到重复内容，请选择新的处理方式'
+  }
+  if (targetRequired.value && !replaceBookId.value) {
+    return '请选择要更新或覆盖的目标书籍'
+  }
+  if (isMerging.value) {
+    return '将保留未变化章节的分析、选角与音频；变化章节提示重新生成'
   }
   return `将创建 ${formatNumber(preview.value.chapter_count)} 个章节 · ${formatNumber(
     preview.value.total_chars,
@@ -179,7 +208,9 @@ function resetPreviewState(): void {
   title.value = ''
   titleTouched.value = false
   author.value = ''
+  authorTouched.value = false
   description.value = ''
+  descriptionTouched.value = false
   duplicatePolicy.value = 'new'
   replaceBookId.value = null
   error.value = null
@@ -208,21 +239,17 @@ async function loadPreview(initial = false): Promise<void> {
     appliedRegex.value = customRegex.value.trim()
     encoding.value = result.encoding
 
-    if (!titleTouched.value || initial) {
-      title.value = filenameStem(result.filename)
-      titleTouched.value = false
-    }
-
     const nextDuplicateId = result.duplicate?.id ?? null
     if (initial || previousDuplicateId !== nextDuplicateId) {
       if (result.duplicate) {
-        duplicatePolicy.value = 'reject'
-        replaceBookId.value = result.duplicate.id
+        duplicatePolicy.value = 'merge'
+        replaceBookId.value = props.initialBookId ?? result.duplicate.id
       } else {
-        duplicatePolicy.value = 'new'
-        replaceBookId.value = null
+        duplicatePolicy.value = props.initialBookId ? 'merge' : 'new'
+        replaceBookId.value = props.initialBookId
       }
     }
+    applyMetadataDefaults(initial)
   } catch (err) {
     if (token !== previewToken) {
       return
@@ -244,8 +271,47 @@ function filenameStem(filename: string): string {
   return filename.replace(/\.txt$/i, '').trim().slice(0, 255)
 }
 
+function applyMetadataDefaults(force = false): void {
+  if (!preview.value) {
+    return
+  }
+  const isUpdate = ['merge', 'replace'].includes(duplicatePolicy.value)
+  const target = isUpdate ? targetBook.value : null
+  const extracted = metadata.value
+
+  if (force || !titleTouched.value) {
+    title.value = target?.title || extracted?.title || filenameStem(preview.value.filename)
+    titleTouched.value = false
+  }
+  if (force || !authorTouched.value) {
+    author.value = target?.author || extracted?.author || ''
+    authorTouched.value = false
+  }
+  if (force || !descriptionTouched.value) {
+    description.value = target?.description || extracted?.description || ''
+    descriptionTouched.value = false
+  }
+}
+
+function metadataSourceLabel(source: string | null | undefined): string {
+  if (source === 'content_label') return '来自正文标签'
+  if (source === 'content_heading') return '来自正文开头'
+  if (source === 'ai_content') return '本地 AI 从正文识别'
+  if (source === 'filename') return '来自文件名'
+  if (source === 'target_book') return '沿用目标书籍'
+  return '未识别'
+}
+
 function handleTitleInput(): void {
   titleTouched.value = true
+}
+
+function handleAuthorInput(): void {
+  authorTouched.value = true
+}
+
+function handleDescriptionInput(): void {
+  descriptionTouched.value = true
 }
 
 function handleEncodingChange(value: string | null): void {
@@ -276,7 +342,14 @@ function onDuplicatePolicyChange(value: string | number): void {
   if (duplicate.value) {
     replaceBookId.value = duplicate.value.id
   }
+  applyMetadataDefaults()
 }
+
+watch(replaceBookId, () => {
+  if (preview.value) {
+    applyMetadataDefaults()
+  }
+})
 
 async function doImport(): Promise<void> {
   if (!file.value || !preview.value || !canImport.value) {
@@ -294,15 +367,22 @@ async function doImport(): Promise<void> {
       customRegex: appliedRegex.value || undefined,
       duplicatePolicy: duplicatePolicy.value,
       replaceBookId:
-        duplicatePolicy.value === 'replace'
+        duplicatePolicy.value === 'replace' || duplicatePolicy.value === 'merge'
           ? replaceBookId.value ?? duplicate.value?.id
           : undefined,
     })
-    message.success(
-      result.replaced
-        ? `已覆盖导入《${result.book.title}》`
-        : `已导入《${result.book.title}》，共 ${result.chapters_created} 章`,
-    )
+    if (result.mode === 'merge') {
+      message.success(
+        `已更新《${result.book.title}》：新增 ${result.chapters_created} 章，` +
+          `变化 ${result.chapters_changed} 章，未变化 ${result.chapters_unchanged} 章`,
+      )
+    } else {
+      message.success(
+        result.replaced
+          ? `已覆盖导入《${result.book.title}》`
+          : `已导入《${result.book.title}》，共 ${result.chapters_created} 章`,
+      )
+    }
     emit('imported', result.book.id)
     show.value = false
   } catch (err) {
@@ -325,9 +405,12 @@ function resetAll(): void {
   title.value = ''
   titleTouched.value = false
   author.value = ''
+  authorTouched.value = false
   description.value = ''
+  descriptionTouched.value = false
   duplicatePolicy.value = 'new'
   replaceBookId.value = null
+  books.value = []
   error.value = null
   dragActive.value = false
   if (fileInput.value) {
@@ -335,9 +418,18 @@ function resetAll(): void {
   }
 }
 
-watch(show, (open) => {
+watch(show, async (open) => {
   if (!open) {
     resetAll()
+    return
+  }
+  replaceBookId.value = props.initialBookId
+  duplicatePolicy.value = props.initialBookId ? 'merge' : 'new'
+  try {
+    const result = await api.listBooks()
+    books.value = result.items.filter((book) => book.status !== 'deleted')
+  } catch (err) {
+    error.value = errorMessage(err)
   }
 })
 </script>
@@ -398,7 +490,7 @@ watch(show, (open) => {
           class="flex min-h-[260px] flex-col items-center justify-center gap-4 rounded-xl border border-ink-700 bg-ink-850/50"
         >
           <NSpin size="medium" />
-          <p class="text-xs text-fog-400">正在识别编码、解析章节…</p>
+          <p class="text-xs text-fog-400">正在识别编码、章节与书目信息，本地 AI 将参与结构校验…</p>
         </div>
 
         <button
@@ -496,7 +588,7 @@ watch(show, (open) => {
               <p class="text-xs font-medium text-brass-200">检测到相同内容的书籍</p>
               <p class="mt-1 text-xs leading-5 text-fog-300">
                 书库中已有《{{ duplicate.title }}》（{{ formatDateTime(duplicate.created_at) }} 导入）。
-                为避免静默覆盖，默认中止本次导入。
+                连载更新建议选择“智能合并”，也可明确选择新书或整本覆盖。
               </p>
             </div>
           </div>
@@ -513,6 +605,12 @@ watch(show, (open) => {
               <span class="text-xs text-fog-200">作为新书导入</span>
               <span class="ml-2 text-[10px] text-fog-500">保留两份相同内容</span>
             </NRadio>
+            <NRadio value="merge">
+              <span class="text-xs text-fog-200">智能合并更新（推荐）</span>
+              <span class="ml-2 text-[10px] text-fog-500">
+                支持完整新版或新增章节片段；保留未变化章节的现有成果
+              </span>
+            </NRadio>
             <NRadio value="replace">
               <span class="text-xs text-fog-200">覆盖已有书籍</span>
               <span class="ml-2 text-[10px] text-fog-500">
@@ -522,23 +620,65 @@ watch(show, (open) => {
           </NRadioGroup>
         </div>
 
+        <section
+          v-if="targetRequired"
+          class="rounded-xl border border-ink-700 bg-ink-850/55 p-4"
+        >
+          <label class="block">
+            <span class="mb-1.5 block text-[11px] text-fog-300">目标书籍</span>
+            <NSelect
+              v-model:value="replaceBookId"
+              :options="targetBookOptions"
+              filterable
+              placeholder="选择要更新的书籍"
+              :disabled="busy || importing"
+            />
+          </label>
+          <p class="mt-2 text-[10px] leading-5 text-fog-500">
+            智能合并不会删除原书；整本覆盖会移入旧目录，有音频或运行中任务时将拒绝。
+          </p>
+        </section>
+
         <div class="grid gap-4 lg:grid-cols-[1.02fr_0.98fr]">
           <div class="space-y-4">
             <section class="rounded-xl border border-ink-700 bg-ink-850/55 p-4">
-              <p class="eyebrow">书目信息</p>
+              <div class="flex items-center justify-between gap-3">
+                <p class="eyebrow">书目信息</p>
+                <span
+                  v-if="metadata"
+                  class="font-mono text-[9px] text-fog-500"
+                >
+                  自动识别 {{ Math.round(metadata.confidence * 100) }}%
+                </span>
+              </div>
               <div class="mt-3 space-y-3">
                 <label class="block">
                   <span class="mb-1.5 block text-[11px] text-fog-300">书名</span>
                   <NInput
                     v-model:value="title"
                     :maxlength="255"
-                    placeholder="默认使用文件名"
+                    placeholder="自动提取书名，可修改"
                     @update:value="handleTitleInput"
                   />
+                  <span class="mt-1 block text-[10px] text-fog-500">
+                    {{ ['merge', 'replace'].includes(duplicatePolicy) && targetBook
+                      ? '沿用目标书籍，避免更新导入覆盖已有书名'
+                      : metadataSourceLabel(metadata?.title_source) }}
+                  </span>
                 </label>
                 <label class="block">
                   <span class="mb-1.5 block text-[11px] text-fog-300">作者</span>
-                  <NInput v-model:value="author" :maxlength="255" placeholder="选填" />
+                  <NInput
+                    v-model:value="author"
+                    :maxlength="255"
+                    placeholder="自动提取，选填"
+                    @update:value="handleAuthorInput"
+                  />
+                  <span class="mt-1 block text-[10px] text-fog-500">
+                    {{ ['merge', 'replace'].includes(duplicatePolicy) && targetBook?.author
+                      ? '沿用目标书籍'
+                      : metadataSourceLabel(metadata?.author_source) }}
+                  </span>
                 </label>
                 <label class="block">
                   <span class="mb-1.5 block text-[11px] text-fog-300">简介</span>
@@ -547,8 +687,14 @@ watch(show, (open) => {
                     type="textarea"
                     :maxlength="5000"
                     :autosize="{ minRows: 2, maxRows: 4 }"
-                    placeholder="选填"
+                    placeholder="自动提取，选填"
+                    @update:value="handleDescriptionInput"
                   />
+                  <span class="mt-1 block text-[10px] text-fog-500">
+                    {{ ['merge', 'replace'].includes(duplicatePolicy) && targetBook?.description
+                      ? '沿用目标书籍'
+                      : metadataSourceLabel(metadata?.description_source) }}
+                  </span>
                 </label>
               </div>
             </section>
@@ -624,7 +770,16 @@ watch(show, (open) => {
           <div class="space-y-4">
             <section class="rounded-xl border border-ink-700 bg-ink-850/55 p-4">
               <div class="flex items-end justify-between gap-3">
-                <p class="eyebrow">章节结构</p>
+                <div>
+                  <p class="eyebrow">章节结构</p>
+                  <p class="mt-1 text-[10px] text-fog-500">
+                    {{ preview.structure_source === 'custom'
+                      ? '自定义正则识别'
+                      : preview.ai_assisted
+                        ? '规则候选 + 本地 AI 辅助识别'
+                        : '规则识别' }}
+                  </p>
+                </div>
                 <span class="text-[11px] text-fog-400">
                   <span class="font-mono text-base text-brass-300">{{ formatNumber(preview.chapter_count) }}</span>
                   章
@@ -679,7 +834,7 @@ watch(show, (open) => {
             :disabled="!canImport"
             @click="doImport"
           >
-            {{ isReplacing ? '覆盖并打开' : '导入并打开' }}
+            {{ isReplacing ? '覆盖并打开' : isMerging ? '合并更新并打开' : '导入并打开' }}
           </NButton>
         </div>
       </div>

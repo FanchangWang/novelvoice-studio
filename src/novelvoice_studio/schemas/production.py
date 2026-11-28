@@ -18,10 +18,18 @@ class ReviewItemOut(BaseModel):
     book_title: str | None = None
     entity_type: str
     entity_id: str | None = None
+    chapter_id: str | None = None
+    chapter_title: str | None = None
     code: str
+    category: str = "content"
+    actionable: bool = True
     severity: str
     title: str
     message: str | None = None
+    location: dict[str, Any] = Field(default_factory=dict)
+    impact: str = ""
+    recommended_action: str = ""
+    action_type: str = "chapter"
     payload: dict[str, Any] = Field(default_factory=dict)
     status: str
     source: str
@@ -81,10 +89,34 @@ class ReviewBatchResolveResponse(BaseModel):
     codes: list[str] = Field(default_factory=list)
 
 
+class AutoProductionRequest(BaseModel):
+    refresh_bible: bool = False
+
+
+class ProductionBatchRequest(BaseModel):
+    stages: list[Literal["scenes", "script"]] = Field(
+        default_factory=lambda: ["scenes", "script"], min_length=1, max_length=2
+    )
+    volume_number: int | None = Field(default=None, ge=0)
+    chapter_ids: list[str] = Field(default_factory=list, max_length=500)
+    only_missing: bool = True
+    adaptation_level: Literal["light", "standard", "strong"] = "light"
+
+    @model_validator(mode="after")
+    def _distinct(self) -> "ProductionBatchRequest":
+        self.stages = list(dict.fromkeys(self.stages))
+        self.chapter_ids = list(dict.fromkeys(self.chapter_ids))
+        return self
+
+
 class ProductionChapterOut(BaseModel):
     id: str
     title: str
     sequence: int
+    volume_number: int = 0
+    volume_title: str = "默认卷"
+    chapter_kind: str = "story"
+    analysis_included: bool = True
     char_count: int
     scene_status: str = "not_started"
     scene_version: int = 0

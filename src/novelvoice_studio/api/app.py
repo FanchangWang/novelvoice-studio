@@ -24,6 +24,8 @@ from novelvoice_studio.db.session import check_database, create_db_engine, creat
 from novelvoice_studio.services.analysis import recover_interrupted_analysis
 from novelvoice_studio.services.casting import recover_interrupted_casting
 from novelvoice_studio.services.scripts import recover_interrupted_scripts
+from novelvoice_studio.services.auto_production import recover_interrupted_auto
+from novelvoice_studio.services.production_batch import recover_interrupted_batches
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     with session_factory() as session:
         script_recovered = recover_interrupted_scripts(session)
         casting_recovered = recover_interrupted_casting(session)
+        batch_recovered = recover_interrupted_batches(session)
+        auto_recovered = recover_interrupted_auto(session)
         session.commit()
     if (
         recovered["jobs"]
@@ -67,10 +71,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         or script_recovered["jobs"]
         or script_recovered["chapters"]
         or casting_recovered["jobs"]
+        or batch_recovered["production_batch_jobs"]
+        or auto_recovered["auto_production_jobs"]
     ):
         logger.warning(
             "已恢复中断的分析任务：jobs=%s chapters=%s bible_jobs=%s scene_jobs=%s "
-            "script_jobs=%s script_chapters=%s casting_jobs=%s casting_books=%s",
+            "script_jobs=%s script_chapters=%s casting_jobs=%s casting_books=%s "
+            "production_batch_jobs=%s auto_production_jobs=%s",
             recovered["jobs"],
             recovered["chapters"],
             recovered["bible_jobs"],
@@ -79,6 +86,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             script_recovered["chapters"],
             casting_recovered["jobs"],
             casting_recovered["books"],
+            batch_recovered["production_batch_jobs"],
+            auto_recovered["auto_production_jobs"],
         )
 
     @asynccontextmanager

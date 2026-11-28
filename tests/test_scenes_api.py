@@ -21,7 +21,7 @@ from novelvoice_studio.models import (
 )
 from novelvoice_studio.services.analysis import recover_interrupted_analysis
 from novelvoice_studio.services.paths import new_id
-from novelvoice_studio.services.scenes import SceneService
+from novelvoice_studio.services.scenes import SceneService, _Unit, _Window
 
 
 def _import_sample(upload, sample_text: str, title: str = "分场测试") -> str:
@@ -310,7 +310,7 @@ def test_scene_invalid_window_falls_back_without_blocking(
                 scenes=[
                     SceneDraft(
                         paragraph_start=first,
-                        paragraph_end=first,
+                        paragraph_end=last + 1,
                         title="不完整窗口",
                         confidence=0.8,
                     )
@@ -339,16 +339,68 @@ def test_scene_invalid_window_falls_back_without_blocking(
 
     assert status["job"]["status"] == "completed"
     assert status["job"]["result"]["fallback_windows"] == 1
-    assert status["scene_status"] == "needs_review"
+    assert status["scene_status"] == "completed"
     state = client.get(f"/api/v1/chapters/{chapter['id']}/scenes").json()
     _assert_contiguous(state["scenes"], chapter, sample_text)
     sources = {item["source"] for item in state["scenes"]}
     assert "system" in sources
     fallback = next(item for item in state["scenes"] if item["source"] == "system")
-    assert fallback["analysis_status"] == "needs_review"
+    assert fallback["analysis_status"] == "completed"
     assert fallback["confidence"] <= 0.2
     codes = {item["code"] for item in state["review_items"]}
-    assert "scene_llm_fallback" in codes
+    assert "scene_llm_fallback" not in codes
+    assert status["scene_status"] == "completed"
+
+
+def test_scene_all_windows_missing_tail_are_repaired(
+    client: TestClient, upload, sample_text: str, app
+) -> None:
+    book_id = _setup_bible(client, upload, sample_text, title="分场漏尾恢复")
+    chapter = _chapter_by_title(client, book_id, "雨夜来客")
+    app.state.settings.analysis.max_chapter_chars = 120
+    registry = app.state.registry
+    original = registry.llm.analyze_chapter_scenes
+
+    def fake(self, paragraphs, known_characters, context=None):
+        first = paragraphs[0]["index"]
+        return ChapterSceneResult(
+            scenes=[
+                SceneDraft(
+                    paragraph_start=first,
+                    paragraph_end=first,
+                    title="模型只覆盖首段",
+                    confidence=0.9,
+                )
+            ],
+            meta={"mock": True},
+        )
+
+    registry.llm.analyze_chapter_scenes = MethodType(fake, registry.llm)
+    try:
+        response = client.post(f"/api/v1/chapters/{chapter['id']}/scenes")
+        assert response.status_code == 202
+        total_windows = response.json()["total_items"]
+        assert total_windows > 1
+        status = _wait_scene(client, chapter["id"])
+    finally:
+        registry.llm.analyze_chapter_scenes = original
+
+    assert status["job"]["status"] == "completed"
+    assert status["job"]["result"]["fallback_windows"] == 0
+    assert status["job"]["result"]["repaired_windows"] == total_windows
+    diagnostics = status["job"]["result"]["coverage_diagnostics"]
+    assert len(diagnostics) == total_windows
+    assert all(item["missing_range"] for item in diagnostics)
+    assert all(item["missing_excerpt"] for item in diagnostics)
+    assert all(item["raw_output_excerpt"] for item in diagnostics)
+    state = client.get(f"/api/v1/chapters/{chapter['id']}/scenes").json()
+    _assert_contiguous(state["scenes"], chapter, sample_text)
+    repaired = [
+        item for item in state["scenes"] if item["title"] == "原文尾部（自动补全）"
+    ]
+    assert len(repaired) == total_windows
+    assert all(item["source"] == "system" for item in repaired)
+    assert status["scene_status"] == "completed"
 
 
 def test_scene_character_resolution_and_age_override(
@@ -423,7 +475,7 @@ def test_scene_character_resolution_and_age_override(
         registry.llm.analyze_chapter_scenes = original
 
     assert status["job"]["status"] == "completed"
-    assert status["scene_status"] == "needs_review"
+    assert status["scene_status"] == "completed"
     state = client.get(f"/api/v1/chapters/{chapter['id']}/scenes").json()
     scene = state["scenes"][0]
     assert scene["pov_character_id"] is None
@@ -437,7 +489,8 @@ def test_scene_character_resolution_and_age_override(
     )
     assert resolved["age_stage"] == target
     codes = {item["code"] for item in state["review_items"]}
-    assert {"scene_unknown_character", "scene_age_stage_conflict", "scene_pov_unknown"} <= codes
+    assert {"scene_unknown_character", "scene_age_stage_conflict"} <= codes
+    assert "scene_pov_unknown" not in codes
 
 
 def test_scene_cancel_and_recovery(
@@ -522,3 +575,23 @@ def test_scene_cancel_and_recovery(
     assert status["job"]["status"] == "failed"
     assert status["job"]["error_code"] == "interrupted"
     assert status["scene_status"] == "failed"
+
+
+def test_scene_one_based_ranges_are_normalized_without_retry() -> None:
+    service = object.__new__(SceneService)
+    window = _Window(
+        index=0,
+        total=1,
+        units=tuple(_Unit(index=index, start=index * 10, end=index * 10 + 9, text="段落") for index in range(3)),
+    )
+    shifted = ChapterSceneResult(scenes=[SceneDraft(
+        paragraph_start=1, paragraph_end=3, title="整体偏移", confidence=0.9,
+    )])
+
+    repaired, detail = service._repair_shifted_ranges(shifted, window)
+
+    assert repaired is not None
+    assert service._coverage_error(repaired, window) is None
+    assert repaired.scenes[0].paragraph_start == 0
+    assert repaired.scenes[0].paragraph_end == 2
+    assert detail["index_shift"] == -1

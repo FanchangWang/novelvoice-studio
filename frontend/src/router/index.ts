@@ -13,9 +13,18 @@ const router = createRouter({
       component: () => import('@/views/LibraryView.vue'),
     },
     {
+      path: '/trash',
+      name: 'trash',
+      component: () => import('@/views/TrashView.vue'),
+    },
+    {
       path: '/books/:bookId',
-      name: 'workspace',
-      component: () => import('@/views/WorkspaceView.vue'),
+      redirect: (route) => ({ name: 'production', params: { bookId: route.params.bookId } }),
+    },
+    {
+      path: '/books/:bookId/chapters/:chapterId',
+      name: 'chapter-reader',
+      component: () => import('@/views/ChapterReaderView.vue'),
       props: true,
     },
     {

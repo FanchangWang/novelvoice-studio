@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import {
   NAlert,
   NButton,
   NInput,
-  NSwitch,
   NTag,
   useDialog,
   useMessage,
@@ -25,11 +24,9 @@ const dialog = useDialog()
 const message = useMessage()
 
 const showImport = ref(false)
+const importTarget = ref<string | null>(null)
 const search = ref('')
-
-const activeBookCount = computed(
-  () => library.books.filter((book) => book.status !== 'deleted').length,
-)
+const viewMode = ref<'cards' | 'list'>('cards')
 
 const filteredBooks = computed(() => {
   const keyword = search.value.trim().toLowerCase()
@@ -45,9 +42,6 @@ const filteredBooks = computed(() => {
 const emptyTitle = computed(() => {
   if (search.value.trim()) {
     return '没有匹配的书籍'
-  }
-  if (library.includeDeleted) {
-    return '回收站是空的'
   }
   return '书库还是空的'
 })
@@ -66,33 +60,29 @@ function statusLabel(status: string): string {
   if (status === 'empty') {
     return '空项目'
   }
-  if (status === 'deleted') {
-    return '回收站'
-  }
   return status
 }
 
-function statusTagType(status: string): 'success' | 'warning' | 'error' | 'default' {
+function statusTagType(status: string): 'success' | 'warning' | 'default' {
   if (status === 'ready') {
     return 'success'
   }
   if (status === 'empty') {
     return 'warning'
   }
-  if (status === 'deleted') {
-    return 'error'
-  }
   return 'default'
 }
 
 function openBook(book: BookSummary): void {
-  if (book.status === 'deleted') {
-    return
-  }
   void router.push({ name: 'production', params: { bookId: book.id } })
 }
 
-function handleCardKey(event: KeyboardEvent, book: BookSummary): void {
+function openImport(book: BookSummary | null = null): void {
+  importTarget.value = book?.id ?? null
+  showImport.value = true
+}
+
+function handleRowKey(event: KeyboardEvent, book: BookSummary): void {
   if (event.key === 'Enter' || event.key === ' ') {
     event.preventDefault()
     openBook(book)
@@ -102,7 +92,7 @@ function handleCardKey(event: KeyboardEvent, book: BookSummary): void {
 function handleDelete(book: BookSummary): void {
   dialog.warning({
     title: '移入回收站',
-    content: `《${book.title}》及其章节会从书库隐藏，可在“显示回收站”中恢复。源文件不会被删除。`,
+    content: `《${book.title}》及其章节会从书库隐藏，可在独立回收站中恢复。源文件不会被删除。`,
     positiveText: '移入回收站',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -114,19 +104,6 @@ function handleDelete(book: BookSummary): void {
       }
     },
   })
-}
-
-async function handleRestore(book: BookSummary): Promise<void> {
-  try {
-    await library.restoreBook(book.id)
-    message.success(`《${book.title}》已恢复`)
-  } catch (err) {
-    message.error(errorMessage(err))
-  }
-}
-
-async function handleIncludeDeleted(value: boolean): Promise<void> {
-  await library.setIncludeDeleted(value)
 }
 
 function handleImported(bookId: string): void {
@@ -150,7 +127,7 @@ onMounted(() => {
             你的有声书工作台
           </h1>
           <p class="mt-2 max-w-xl text-sm leading-6 text-fog-400">
-            导入小说 TXT 后进入制作台：分析角色、生成分场与剧本、选角，再生成音频。原文与项目数据只保存在本机。
+            导入小说 TXT 后进入制作台。章节、角色、剧本与音频只保存在本机。
           </p>
         </div>
 
@@ -161,13 +138,13 @@ onMounted(() => {
           >
             模拟模式 · 不调用模型
           </span>
-          <NButton type="primary" @click="showImport = true">导入 TXT</NButton>
+          <NButton type="primary" @click="openImport()">导入 TXT</NButton>
         </div>
       </div>
 
       <div class="mt-7 flex flex-wrap items-center gap-x-8 gap-y-3 border-y border-ink-700/70 py-3">
         <div class="flex items-baseline gap-2">
-          <span class="font-mono text-lg text-fog-100">{{ formatNumber(activeBookCount) }}</span>
+          <span class="font-mono text-lg text-fog-100">{{ formatNumber(library.total) }}</span>
           <span class="text-[10px] uppercase tracking-[0.16em] text-fog-500">在库书籍</span>
         </div>
         <div class="h-4 w-px bg-ink-700" />
@@ -201,15 +178,35 @@ onMounted(() => {
           </span>
         </div>
 
-        <label class="flex cursor-pointer items-center gap-2 text-[11px] text-fog-400">
-          <NSwitch
-            size="small"
-            :value="library.includeDeleted"
-            :loading="library.loading"
-            @update:value="handleIncludeDeleted"
-          />
-          显示回收站
-        </label>
+        <div class="flex items-center gap-3">
+          <div class="flex items-center rounded-lg border border-ink-700 p-0.5" role="group" aria-label="书籍展示方式">
+            <NButton
+              size="tiny"
+              :type="viewMode === 'cards' ? 'primary' : 'tertiary'"
+              :aria-pressed="viewMode === 'cards'"
+              @click="viewMode = 'cards'"
+            >
+              卡片
+            </NButton>
+            <NButton
+              size="tiny"
+              :type="viewMode === 'list' ? 'primary' : 'tertiary'"
+              :aria-pressed="viewMode === 'list'"
+              @click="viewMode = 'list'"
+            >
+              列表
+            </NButton>
+          </div>
+          <RouterLink
+            to="/trash"
+            class="nv-focus inline-flex items-center gap-2 rounded-lg border border-ink-700 px-3 py-1.5 text-[11px] text-fog-300 transition-colors hover:border-ink-600 hover:text-fog-100"
+          >
+            回收站
+            <span class="rounded bg-ink-800 px-1.5 py-0.5 font-mono text-[10px] text-fog-400">
+              {{ formatNumber(library.trashTotal) }}
+            </span>
+          </RouterLink>
+        </div>
       </div>
 
       <NAlert v-if="library.error" type="error" :bordered="false" class="mb-4">
@@ -239,37 +236,32 @@ onMounted(() => {
         </div>
         <h2 class="mt-4 font-display text-xl text-fog-200">{{ emptyTitle }}</h2>
         <p class="mt-2 max-w-sm text-xs leading-6 text-fog-500">{{ emptyHint }}</p>
-        <div v-if="!search.trim() && !library.includeDeleted" class="mt-5 flex gap-2">
-          <NButton type="primary" @click="showImport = true">导入 TXT</NButton>
+        <div v-if="!search.trim()" class="mt-5 flex gap-2">
+          <NButton type="primary" @click="openImport()">导入 TXT</NButton>
         </div>
       </div>
 
-      <div v-else class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <div v-else-if="viewMode === 'cards'" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <article
           v-for="book in filteredBooks"
           :key="book.id"
-          class="nv-card nv-card-hover group relative flex min-h-[248px] flex-col overflow-hidden rounded-xl p-5 outline-none"
-          :class="book.status === 'deleted' ? 'opacity-70' : 'cursor-pointer focus-visible:border-brass-500/70'"
-          :tabindex="book.status === 'deleted' ? -1 : 0"
-          :role="book.status === 'deleted' ? undefined : 'link'"
+          class="nv-card nv-card-hover group relative flex min-h-[248px] flex-col overflow-hidden rounded-xl p-5 outline-none cursor-pointer focus-visible:border-brass-500/70"
+          tabindex="0"
+          role="link"
           @click="openBook(book)"
-          @keydown="handleCardKey($event, book)"
+          @keydown="handleRowKey($event, book)"
         >
           <div class="absolute inset-y-0 left-0 w-px bg-gradient-to-b from-transparent via-brass-600/50 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
 
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
               <div class="flex items-center gap-2">
-                <span class="font-mono text-[9px] tracking-wider text-fog-600">
-                  {{ book.id.slice(-6).toUpperCase() }}
-                </span>
+                <span class="font-mono text-[9px] tracking-wider text-fog-600">{{ book.id }}</span>
                 <NTag :type="statusTagType(book.status)" size="small" :bordered="false">
                   {{ statusLabel(book.status) }}
                 </NTag>
               </div>
-              <h3 class="mt-2.5 truncate font-display text-xl text-fog-100">
-                {{ book.title }}
-              </h3>
+              <h3 class="mt-2.5 truncate font-display text-xl text-fog-100">{{ book.title }}</h3>
               <p class="mt-1 truncate text-[11px] text-fog-500">
                 {{ book.author || '未署名' }}
                 <span class="mx-1 text-fog-600">·</span>
@@ -301,35 +293,65 @@ onMounted(() => {
           </div>
 
           <div class="mt-3 flex items-center justify-between gap-2">
-            <span
-              class="text-[10px]"
-              :class="book.status === 'deleted' ? 'text-fog-500' : 'text-brass-400/90'"
-            >
-              {{ book.status === 'deleted' ? '已移入回收站' : '进入制作台' }}
-              <span v-if="book.status !== 'deleted'" aria-hidden="true">→</span>
-            </span>
-            <NButton
-              v-if="book.status === 'deleted'"
-              size="tiny"
-              secondary
-              @click.stop="handleRestore(book)"
-            >
-              恢复
-            </NButton>
-            <NButton
-              v-else
-              size="tiny"
-              quaternary
-              class="transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
-              @click.stop="handleDelete(book)"
-            >
-              移入回收站
-            </NButton>
+            <span class="text-[10px] text-brass-400/90">进入制作台 <span aria-hidden="true">→</span></span>
+            <div class="flex items-center gap-1">
+              <NButton size="tiny" secondary @click.stop="openImport(book)">更新导入</NButton>
+              <NButton size="tiny" quaternary @click.stop="handleDelete(book)">移入回收站</NButton>
+            </div>
           </div>
         </article>
       </div>
+
+      <div v-else class="overflow-x-auto rounded-xl border border-ink-700 bg-ink-900/40">
+        <table class="w-full min-w-[760px] text-left text-xs">
+          <thead class="border-b border-ink-700 bg-ink-850/60 text-[10px] uppercase tracking-wider text-fog-500">
+            <tr>
+              <th scope="col" class="px-4 py-3 font-medium">书籍</th>
+              <th scope="col" class="px-4 py-3 font-medium">作者</th>
+              <th scope="col" class="px-4 py-3 text-right font-medium">章节</th>
+              <th scope="col" class="px-4 py-3 text-right font-medium">字数</th>
+              <th scope="col" class="px-4 py-3 font-medium">更新时间</th>
+              <th scope="col" class="px-4 py-3 text-right font-medium">操作</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-ink-700/70">
+            <tr
+              v-for="book in filteredBooks"
+              :key="book.id"
+              class="cursor-pointer outline-none transition-colors hover:bg-ink-850/60 focus-visible:bg-ink-850/70"
+              tabindex="0"
+              @click="openBook(book)"
+              @keydown="handleRowKey($event, book)"
+            >
+              <td class="px-4 py-3">
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-[9px] text-fog-600">{{ book.id }}</span>
+                  <NTag :type="statusTagType(book.status)" size="small" :bordered="false">
+                    {{ statusLabel(book.status) }}
+                  </NTag>
+                </div>
+                <p class="mt-1 max-w-xs truncate font-medium text-fog-100">{{ book.title }}</p>
+              </td>
+              <td class="px-4 py-3 text-fog-400">{{ book.author || '未署名' }}</td>
+              <td class="px-4 py-3 text-right font-mono text-fog-300">{{ formatNumber(book.chapter_count) }}</td>
+              <td class="px-4 py-3 text-right font-mono text-fog-300">{{ formatNumber(book.source_char_count) }}</td>
+              <td class="whitespace-nowrap px-4 py-3 text-fog-500">{{ formatDateTime(book.updated_at) }}</td>
+              <td class="px-4 py-3">
+                <div class="flex justify-end gap-1">
+                  <NButton size="tiny" secondary @click.stop="openImport(book)">更新导入</NButton>
+                  <NButton size="tiny" quaternary @click.stop="handleDelete(book)">移入回收站</NButton>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
-    <ImportBookModal v-model:show="showImport" @imported="handleImported" />
+    <ImportBookModal
+      v-model:show="showImport"
+      :initial-book-id="importTarget"
+      @imported="handleImported"
+    />
   </div>
 </template>

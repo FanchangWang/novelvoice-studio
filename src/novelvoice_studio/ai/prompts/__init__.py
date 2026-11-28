@@ -15,21 +15,42 @@ SEGMENT_PROMPT_VERSION = f"{PROMPT_VERSION}.segments"
 SUMMARY_PROMPT_VERSION = f"{PROMPT_VERSION}.summary"
 REPAIR_PROMPT_VERSION = f"{PROMPT_VERSION}.repair"
 
+# TXT 导入：规则提供候选，本机模型确认非标准卷/章节标题并提取书目信息。
+IMPORT_PROMPT_VERSION = "v050.p1.import.v1"
+
 # v0.5.0 P2 全书角色圣经。分遍处理，禁止把整本书放进一次调用。
-BIBLE_PROMPT_VERSION = "v050.p2.bible.v3"
+BIBLE_PROMPT_VERSION = "v050.p2.bible.v5"
 BIBLE_CHARACTER_PROMPT_VERSION = f"{BIBLE_PROMPT_VERSION}.characters"
 BIBLE_MERGE_PROMPT_VERSION = f"{BIBLE_PROMPT_VERSION}.merge"
 BIBLE_TIMELINE_PROMPT_VERSION = f"{BIBLE_PROMPT_VERSION}.timeline"
 
 # v0.5.0 P3 逐章分场与角色状态快照。窗口按片段编号完整覆盖。
-SCENE_PROMPT_VERSION = "v050.p3.scene.v1"
+SCENE_PROMPT_VERSION = "v050.p3.scene.v3"
 
 # v0.5.0 P4 有声剧本。默认轻改编，source_text 必须按顺序覆盖场景原文。
-SCRIPT_PROMPT_VERSION = "v050.p4.script.v1"
+SCRIPT_PROMPT_VERSION = "v050.p4.script.v4"
 
 _JSON_RULES = """你必须只输出一个合法 JSON 对象，不要输出 Markdown、代码围栏、解释或前后缀文字。
 不得编造原文没有的事实。无法判断时使用 unknown，不要根据姓名刻板印象猜测性别或年龄。
 所有引文必须来自本次输入文本。"""
+
+_IMPORT_STRUCTURE_SCHEMA = """{
+  "headings": [
+    {
+      "line_number": 1,
+      "heading_type": "volume|story|extra|author_note",
+      "volume_number": 0,
+      "confidence": 0.0
+    }
+  ],
+  "metadata": {
+    "title": "书名或 null",
+    "author": "作者或 null",
+    "description": "原文内容简介，最多 180 字；没有则为 null",
+    "confidence": 0.0
+  },
+  "notes": ["只有确实影响导入准确性的疑点"]
+}"""
 
 _CHARACTER_SCHEMA = """{
   "characters": [
@@ -152,6 +173,8 @@ _BIBLE_MERGE_SCHEMA = """{
           "story_time_end": "剧情时间终点，可为 null",
           "summary": "该阶段变化，最多 100 字",
           "voice_hint": "该阶段声音倾向，可为 null",
+          "age_stage_explicit": false,
+          "age_stage_evidence": [],
           "confidence": 0.0
         }
       ],
@@ -239,19 +262,29 @@ _SCRIPT_SYSTEM = (
     "你是中文小说的有声剧本编辑。把输入场景整理成适合多角色配音的单元序列。"
     "默认执行轻改编：保留原文叙述顺序、事实、人物关系和台词，不新增情节，不改写措辞。"
     "\n规则：\n"
-    "1. source_text 必须逐字取自输入场景；units 按原文顺序排列，相邻单元的 source_text "
+    "1. source_text 必须从输入场景逐字复制，包括标题、弯引号、标点和换行；"
+    "不得改成直引号、补写或漏字。units 按原文顺序排列，相邻单元的 source_text "
     "必须连续衔接，全部 units 合起来（除空白外）完整覆盖输入场景。不得跳段、重叠或遗漏。\n"
     "2. 一段原文可以拆成多个单元。若省略“他说/她道/问道”等纯阅读提示，"
     "仍要把这些字放进相邻单元的 source_text 覆盖范围，只让 text 不朗读它们。\n"
     "3. 引号内的直接台词用 dialogue；明确标出的内心想法用 inner_monologue；"
-    "其余用 narration。普通叙述与内心独白默认 speaker_type=narrator。\n"
-    "4. dialogue 的 speaker_name 只能是角色注册表中的标准姓名；"
-    "证据不足时用 unknown，并在 notes 说明，不得猜测。\n"
-    "5. 拟声词、拍击声等可以拆成 sfx cue；雨声、风声等持续环境声用 ambience；"
+    "其余用 narration。普通叙述与内心独白默认 speaker_type=narrator。"
+    "引号不是唯一依据：结合说话动作、语气和上下文识别无引号对白；"
+    "叙述中引用称谓（如“他们喊那个女生‘瑶姐’”“她想再听他叫‘婉婉’”）不是台词，"
+    "不得拆成 dialogue。船名、舰名、书名、篇名、称号和被提及的短词也不是台词，"
+    "即使带引号也应保持 narration。\n"
+    "4. 说话人可在台词前或台词后补充，也可倒装。例如“在干吗呢？欺负小姑娘？”"
+    "一道凌厉的女声……，后文众人喊她“瑶姐”，应结合注册表把说话人归并为“时瑶”；"
+    "同一场景中“瑶姐”是“时瑶”的唯一代称时使用标准姓名“时瑶”。"
+    "一个引号对内多个问号/叹号属于同一句台词，不得按问号拆成多个旁白。\n"
+    "5. dialogue 的 speaker_name 只能是角色注册表中的标准姓名；"
+    "证据不足时用 unknown，并在 notes 说明，不得猜测。"
+    "一个模型单元包含多个独立引号时，必须分别判断各自说话人，不得整段复用同一个说话人。\n"
+    "6. 拟声词、拍击声等可以拆成 sfx cue；雨声、风声等持续环境声用 ambience；"
     "明确停顿用 pause。cue/pause 不进入 TTS，text 为空，信息写 display_text 与 sfx。\n"
-    "6. 长句按呼吸和语义切分，但不得改变句意；emotion/delivery 没有依据时使用 neutral/normal，"
-    "置信度保守。\n"
-    "7. 不得输出原文之外的新增旁白、解释或总结。\n"
+    "7. 长句按呼吸和语义切分，但不得改变句意；emotion/delivery 没有依据时使用 neutral/normal，"
+    "置信度保守。同一说话人的连续对白继承情绪与表演状态，除非原文明确改变。\n"
+    "8. 不得输出原文之外的新增旁白、解释或总结。\n"
     f"\n{_JSON_RULES}\n输出结构：\n{_SCRIPT_SCHEMA}"
 )
 
@@ -353,13 +386,19 @@ def bible_character_messages(
         "与明显变化，供后续全局归并使用。"
         "\n规则：\n"
         "1. 只提取有明确叙事作用的主要人物和重要配角，不要为路人、群体称谓或普通名词创建角色。\n"
-        "2. 合并本章出现的全名、简称、称谓与绰号；证据不足时性别、年龄、类型设为 unknown。\n"
-        "3. 不得根据姓名刻板印象推断性别或年龄；不得把上一章摘要当作本章原文证据。\n"
-        "4. age_range 表示角色在本章所处的人生阶段；arc_note 记录本章状态/变化，"
+        "2. 优先复用已知角色注册表。结合当前窗口前后文、本章摘要与人物关系，"
+        "消解“娘娘、殿下、姨娘、皇上”等敬称的指代；例如前文问“宜妃娘娘”，"
+        "后文宫女答“娘娘”，两句都指宜妃。\n"
+        "3. 同一人物的全名、简称、具体封号和绰号合并到同一角色；"
+        "“宜妃娘娘”可作为宜妃的别名，但单独“娘娘”不得作为角色名或全局别名。\n"
+        "4. 无法根据上下文唯一确定敬称指向谁时，不要创建以该敬称命名的角色，"
+        "也不要把它绑定给多个角色；证据不足时性别、年龄、类型设为 unknown。\n"
+        "5. 不得根据姓名刻板印象推断性别或年龄；不得把上一章摘要当作本章原文证据。\n"
+        "6. age_range 表示角色在本章所处的人生阶段；arc_note 记录本章状态/变化，"
         "例如幼年、受伤、紧张、黑化后。不要用全书最终年龄覆盖本章状态。\n"
-        "5. role_tier 表示全书层级判断；本章无法判断时使用 unknown。\n"
-        "6. 关系两端必须使用角色标准姓名；只记录本章有证据的关系。\n"
-        "7. timeline 记录本章故事发生时间与叙事模式（顺叙/倒叙/回忆/梦境）。"
+        "7. role_tier 表示全书层级判断；本章无法判断时使用 unknown。\n"
+        "8. 关系两端必须使用角色标准姓名；只记录本章有证据的关系。\n"
+        "9. timeline 记录本章故事发生时间与叙事模式（顺叙/倒叙/回忆/梦境）。"
         "无法判断时用 unknown，不要按章节号臆测。"
         f"\n{_JSON_RULES}\n输出结构：\n{_BIBLE_CHARACTER_SCHEMA}"
     )
@@ -395,7 +434,12 @@ def bible_merge_messages(
         "2. 证据不足时保留为不同角色，并把疑点写入 notes，不要强行合并。\n"
         "3. 人物弧按剧情时间排序；chapter_start/chapter_end 使用章节序号。"
         "倒叙、回忆中的状态不能被当成当前章节状态。\n"
-        "4. 同一角色可以有多个阶段（幼年、青年、老年、黑化后等）；没有阶段变化时只给一个阶段。\n"
+        "4. 人物弧可以描述心理、关系或剧情阶段，但 age_stage 只表示真实年龄。"
+        "连续数小时、数天或普通章节推进中，同一角色的年龄和声线必须保持不变；"
+        "黑化、重逢、受伤、情绪变化不得改年龄。只有原文明确出现真实成长、时间跳转，"
+        "或倒叙/回忆/梦境中的另一时点年龄时，才设置不同的 age_stage，并把 "
+        "age_stage_explicit 设为 true，同时在 age_stage_evidence 给出候选角色证据中的原句。"
+        "没有这类证据时 age_stage_explicit=false、age_stage_evidence=[]，并使用该角色主要年龄。\n"
         "5. role_tier 表示全书层级：protagonist 主角、major 重要配角、minor 次要角色、"
         "extra 路人级但需要声音的角色、unknown 无法判断。\n"
         "6. notes 只记录候选表内的归并或阶段疑点；不得补充候选表以外的"
@@ -446,14 +490,18 @@ def scene_messages(
         "\n规则：\n"
         "1. 每个输入片段必须且只能属于一个场景；scenes 必须按片段顺序排列，"
         "paragraph_start/paragraph_end 是输入片段的 index（包含首尾），"
-        "不得跳号、重叠或遗漏。\n"
+        "不得跳号、重叠或遗漏。第一个场景必须从输入第一个片段开始，"
+        "最后一个场景的 paragraph_end 必须等于输入最后一个片段的 index；"
+        "即使尾部只是收束动作或环境描写，也不能省略。\n"
         "2. 按地点、故事时间、视角、事件或情绪转折切分场景，不要仅按长度平均切分。\n"
         "3. 角色姓名只能使用注册表中的标准姓名，不得创造新角色；"
         "只被提及而未出场的角色可用 presence=mentioned；对话发言者用 speaker。\n"
         "4. 状态必须按场景的剧情时间解释。time_mode 不是 present（倒叙、回忆、梦境、预叙）时，"
         "要使用角色在那一时点的年龄阶段与身心状态，不得把当前章节状态带进去。\n"
         "5. age_stage、身体、心理、关系、知情、伪装和声音提示只在原文有依据时填写；"
-        "没有依据用 unknown 或 null。关系状态写本场景中的态度/距离，不重复全书关系设定。\n"
+        "没有依据用 unknown 或 null。present 场景中，同一角色跨小时或数天仍须使用同一真实年龄；"
+        "心理、关系、受伤或情绪变化不得改变 age_stage。关系状态写本场景中的态度/距离，"
+        "不重复全书关系设定。\n"
         "6. 视角角色优先从注册表选择；无法判断时 pov_name=null。\n"
         "7. 置信度要保守；分场边界或状态不确定时写 notes，供异常收件箱处理。\n"
         f"\n{_JSON_RULES}\n输出结构：\n{_SCENE_SCHEMA}"
@@ -487,6 +535,7 @@ def script_messages(
     scene = context.get("scene") or {}
     chunk = context.get("chunk") or {}
     speaker_states = context.get("speaker_states") or []
+    adjacent = context.get("adjacent_source") or {}
     user = (
         f"书籍：{context.get('book_title', '未知')}\n"
         f"章节：{context.get('chapter_title', '')}\n"
@@ -495,15 +544,53 @@ def script_messages(
         f"time_mode={scene.get('time_mode') or 'unknown'}\n"
         f"场景摘要（仅供指代，不可当作原文）：{scene.get('summary') or '无'}\n"
         f"改编档位：{context.get('adaptation_level') or 'light'}\n"
-        f"场景分块：{chunk.get('index', 1)}/{chunk.get('total', 1)}\n\n"
+        f"场景分块：{chunk.get('index', 1)}/{chunk.get('total', 1)}\n"
+        f"前一段原文（仅用于指代和说话人消解，不要输出为剧本单元）：\n{adjacent.get('before') or '无'}\n"
+        f"后一段原文（仅用于指代和说话人消解，不要输出为剧本单元）：\n{adjacent.get('after') or '无'}\n\n"
         f"角色注册表：\n{_registry(known_characters)}\n\n"
         f"本场景角色状态（用于说话人、语气和声音提示）：\n"
         f"{json.dumps(speaker_states, ensure_ascii=False, indent=2)}\n\n"
         "请把下面的场景原文整理为有声剧本单元。再次强调："
-        "units 的 source_text 必须按顺序连续覆盖全文，只允许忽略空白。\n\n"
+        "units 的 source_text 必须按顺序连续覆盖全文，只允许忽略空白；"
+        "每个 source_text 都要从场景原文逐字复制，不得改变引号、标题、标点或文字。\n\n"
         f"<scene>\n{scene_text}\n</scene>"
     )
     return [_system(_SCRIPT_SYSTEM), _user(user)]
+
+
+def import_structure_messages(
+    front_matter: str,
+    candidates: list[dict[str, object]],
+    rule_headings: list[dict[str, object]],
+    *,
+    include_metadata: bool = True,
+) -> list[dict[str, str]]:
+    system = (
+        "你是中文小说 TXT 导入结构编辑。输入是规则筛选出的候选短行，"
+        "不是整本小说。你的任务是确认其中哪些是卷、章、节、篇、回、序、前言、"
+        "后记、番外或作者说明标题，并从书籍开头提取书名、作者和内容简介。"
+        "\n规则：\n"
+        "1. 只返回 candidates 中实际存在的 line_number，不得创造行号或改写标题。\n"
+        "2. 编号式标题如“1.疯狂年代”“二、寂静的春天”可以是章节；"
+        "但文中清单、报告目录、日期、对白、引用、落款和普通短句不是章节。\n"
+        "3. 一组编号标题应形成合理递增序列；内部编号列表即使从 1 开始也不是章节。\n"
+        "4. heading_type 只能是 volume（卷/部/篇级标题）、story（正文章节）、"
+        "extra（番外/前言/序章/尾声等）、author_note（请假/停更/作者有话等）。\n"
+        "5. 没有卷标题时不要虚构卷；volume_number 使用原文卷号，无法判断为 0。\n"
+        "6. metadata 只能根据 front_matter 提取。书名优先正文书名，不能使用网址、"
+        "分隔线或下载站声明；简介只概括原文已经提供的简介，不编造、不写读后感，"
+        "最多 180 字；没有信息返回 null。\n"
+        "7. 不确定的候选不要返回，notes 只记录真正影响导入的疑点。\n"
+        f"\n{_JSON_RULES}\n输出结构：\n{_IMPORT_STRUCTURE_SCHEMA}"
+    )
+    user = (
+        f"<front_matter>\n{front_matter[:8000]}\n</front_matter>\n\n"
+        f"规则已识别标题（供参考，不可输出不存在于 candidates 的行号）：\n"
+        f"{json.dumps(rule_headings, ensure_ascii=False)}\n\n"
+        f"候选短行：\n{json.dumps(candidates, ensure_ascii=False)}\n\n"
+        + ("请同时提取 metadata。" if include_metadata else "本批只识别 headings，metadata 返回 null。")
+    )
+    return [_system(system), _user(user)]
 
 
 def repair_messages(
@@ -525,6 +612,7 @@ def repair_messages(
 
 
 SCHEMAS = {
+    "import_structure": _IMPORT_STRUCTURE_SCHEMA,
     "characters": _CHARACTER_SCHEMA,
     "segments": _SEGMENT_SCHEMA,
     "summary": _SUMMARY_SCHEMA,

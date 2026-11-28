@@ -61,12 +61,22 @@ from novelvoice_studio.schemas.scripts import (
     ScriptStateResponse,
     ScriptStatusResponse,
     ScriptUnitOut,
+    ScriptUnitSpeakerUpdate,
     ScriptVersionOut,
     ScriptVersionListResponse,
 )
 from novelvoice_studio.services.analysis_serializers import to_job_out
 from novelvoice_studio.services.books import BookService
 from novelvoice_studio.services.paths import new_id, validate_id
+from novelvoice_studio.services.production_status import (
+    effective_stage_status,
+    effective_unit_status,
+    effective_version_status,
+    has_open_blocking,
+    stage_review_scope,
+)
+from novelvoice_studio.services.review_policy import policy_for
+from novelvoice_studio.services.scenes import SceneService
 from novelvoice_studio.services.unit_audio import (
     refresh_stale_units,
     resolve_unit_voices,
@@ -103,6 +113,101 @@ def _iso_now() -> str:
 
 def _norm(value: str) -> str:
     return " ".join(value.split()).casefold()
+
+
+_QUOTE_EQUIVALENTS = str.maketrans({
+    "“": '"', "”": '"', "„": '"', "«": '"', "»": '"',
+    "‘": "'", "’": "'", "‚": "'", "「": '"', "」": '"',
+    "『": '"', "』": '"',
+})
+
+
+def _source_match_index(text: str) -> tuple[str, list[int], list[int]]:
+    """建立容错匹配文本到原始字符位置的映射，不改写最终写入的原文。"""
+    normalized: list[str] = []
+    starts: list[int] = []
+    ends: list[int] = []
+    for index, char in enumerate(text):
+        if char.isspace():
+            continue
+        normalized.append(char.translate(_QUOTE_EQUIVALENTS))
+        starts.append(index)
+        ends.append(index + 1)
+    return "".join(normalized), starts, ends
+
+
+def _within_one_edit(left: str, right: str) -> bool:
+    """只接受最多一次字符替换、遗漏或额外插入，避免宽泛模糊匹配。"""
+    difference = len(left) - len(right)
+    if abs(difference) > 1:
+        return False
+    if difference == 0:
+        return sum(a != b for a, b in zip(left, right, strict=True)) <= 1
+    shorter, longer = (right, left) if difference > 0 else (left, right)
+    offset = 0
+    while offset < len(shorter) and shorter[offset] == longer[offset]:
+        offset += 1
+    return shorter[offset:] == longer[offset + 1 :]
+
+
+def _fuzzy_source_span(
+    quote: str,
+    normalized_source: str,
+    normalized_cursor: int,
+    source_starts: list[int],
+    source_ends: list[int],
+) -> tuple[int, int] | None:
+    """为长引文的一次抄写偏差定位；候选不唯一时放弃，交由原文补齐。"""
+    if len(quote) < 24:
+        return None
+    anchor_size = min(8, len(quote) // 3)
+    anchors = {
+        (quote[:anchor_size], 0),
+        (quote[len(quote) // 2 : len(quote) // 2 + anchor_size], len(quote) // 2),
+        (quote[-anchor_size:], len(quote) - anchor_size),
+    }
+    candidates: set[tuple[int, int]] = set()
+    for source_length in (len(quote) - 1, len(quote), len(quote) + 1):
+        for anchor, quote_offset in anchors:
+            position = normalized_source.find(anchor, normalized_cursor)
+            while position >= 0:
+                # 锚点前若发生一次替换/增删，真实起点会偏移一个字符。
+                anchor_start = position - quote_offset
+                for start in (anchor_start - 1, anchor_start, anchor_start + 1):
+                    if start >= normalized_cursor and start + source_length <= len(normalized_source):
+                        candidate = normalized_source[start : start + source_length]
+                        if _within_one_edit(quote, candidate):
+                            candidates.add((start, start + source_length))
+                position = normalized_source.find(anchor, position + 1)
+    if len(candidates) != 1:
+        return None
+    start, end = next(iter(candidates))
+    return source_starts[start], source_ends[end - 1]
+
+
+def _find_source_span(
+    quote: str,
+    source: str,
+    cursor: int,
+    match_index: tuple[str, list[int], list[int]] | None = None,
+) -> tuple[int, int] | None:
+    """严格优先定位原文；容错仅处理空白、引号和长引文的一次抄写偏差。"""
+    strict = source.find(quote, cursor)
+    if strict >= 0:
+        return strict, strict + len(quote)
+    normalized, starts, ends = match_index or _source_match_index(source)
+    normalized_quote = "".join(quote.split()).translate(_QUOTE_EQUIVALENTS)
+    if not normalized_quote:
+        return None
+    normalized_cursor = next(
+        (index for index, start in enumerate(starts) if start >= cursor), len(starts)
+    )
+    local = normalized.find(normalized_quote, normalized_cursor)
+    if local >= 0:
+        return starts[local], ends[local + len(normalized_quote) - 1]
+    return _fuzzy_source_span(
+        normalized_quote, normalized, normalized_cursor, starts, ends
+    )
 
 
 def _clean_text(value: object, limit: int) -> str | None:
@@ -161,22 +266,43 @@ def _evidence_dicts(
 
 
 def _split_window(text: str, start: int, limit: int) -> list[tuple[int, int, str]]:
-    """按句末标点切块；无法切时硬切，保证每块可控。"""
+    """按引号外的句末标点切块，避免把一句对白或船名拦腰截断。"""
     spans: list[tuple[int, int, str]] = []
     cursor = 0
     length = len(text)
+    closing = {"“": "”", "「": "」", "『": "』", "‘": "’"}
     while cursor < length:
         hard_end = min(length, cursor + limit)
         if hard_end >= length:
             end = length
         else:
-            window = text[cursor:hard_end]
+            quote: str | None = None
             cut = -1
-            for position in range(len(window) - 1, max(1, len(window) // 2), -1):
-                if window[position] in "。！？!?；;\n":
+            for position in range(cursor, hard_end):
+                char = text[position]
+                if quote is not None:
+                    if char == quote:
+                        quote = None
+                    continue
+                if char in closing:
+                    quote = closing[char]
+                    continue
+                if char in "。！？!?；;\n":
                     cut = position + 1
-                    break
-            end = cursor + cut if cut > 0 else hard_end
+            if cut < 0:
+                # 硬上限落在引号内时，优先延长到闭合引号，再寻找句末。
+                if quote is not None:
+                    close_at = text.find(quote, hard_end)
+                    if close_at >= 0:
+                        extended = min(length, close_at + 1)
+                        for position in range(close_at + 1, min(length, extended + 80)):
+                            if text[position] in "。！？!?；;\n":
+                                extended = position + 1
+                                break
+                        cut = extended
+                if cut < 0:
+                    cut = hard_end
+            end = cut
         content_start = cursor
         while content_start < end and text[content_start].isspace():
             content_start += 1
@@ -195,17 +321,150 @@ def _split_window(text: str, start: int, limit: int) -> list[tuple[int, int, str
     return spans
 
 
-_SENTENCE = re.compile(r"[^\n。！？!?；;]+[。！？!?；;]?")
-_QUOTED = re.compile(r"[“「『]([^”」』]+)[”」』]")
+_QUOTE_SPAN = re.compile(r"[“「『‘]([^”」』’]*)[”」』’]")
 _INNER_MARKERS = ("心想", "心里", "暗想", "默念", "暗自")
+_NARRATIVE_QUOTE_CUES = re.compile(
+    r"(?:喊|叫|称|唤|提及|说起|名叫|名为|昵称|绰号|夸|笑称)"
+)
+_OBJECT_QUOTE_CUES = re.compile(
+    r"(?:船名|舰名|飞船|战舰|舰|船名|名叫|名为|叫做|称为|称作|提名|书名|篇名|名为|题名)"
+)
+_SPEECH_CUES = re.compile(
+    r"(?:说|问|答|喊|叫|称|道|笑|骂|吼|啜|哽咽|回答|反问|自语)"
+)
+_SENTENCE_END = set("。！？!?；;\n")
+
+
+def _quote_spans(text: str) -> list[tuple[int, int, str, str]]:
+    return [
+        (match.start(), match.end(), match.group(0), match.group(1))
+        for match in _QUOTE_SPAN.finditer(text)
+    ]
+
+
+def _is_direct_quote(text: str, start: int, end: int, inner: str) -> bool:
+    prefix = text[max(0, start - 28) : start]
+    suffix = text[end : end + 36]
+    cleaned = inner.strip()
+    if len(cleaned) <= 40 and (
+        _OBJECT_QUOTE_CUES.search(prefix[-24:])
+        or re.match(r"\s*(?:号|舰|船|轮|机|艇)", suffix[:8])
+    ):
+        return False
+    title_like = bool(
+        re.fullmatch(r".{1,4}(?:姐|哥|姨|叔|爷|奶|先生|小姐|老师|同学)", cleaned)
+        or re.fullmatch(r"(.)\1", cleaned)
+    )
+    # 引号常用来标记被呼喊/提及的称谓，不能仅凭引号判成对白。
+    if (
+        len(cleaned) <= 12
+        and title_like
+        and (_NARRATIVE_QUOTE_CUES.search(prefix) or _NARRATIVE_QUOTE_CUES.search(suffix))
+    ):
+        return False
+    if text[start] not in {"‘"}:
+        return True
+    # 单引号常用来标记被呼喊/提及的称谓，不能仅凭引号判成对白。
+    if (
+        len(cleaned) <= 12
+        and not any(mark in cleaned for mark in "，。！？!?；;")
+        and (_NARRATIVE_QUOTE_CUES.search(prefix) or _NARRATIVE_QUOTE_CUES.search(suffix))
+    ):
+        return False
+    # 句首单引号且后文出现声音/说话动作时，仍按直接对白处理。
+    if not prefix.strip() and _SPEECH_CUES.search(suffix):
+        return True
+    return not bool(_NARRATIVE_QUOTE_CUES.search(prefix))
+
+
+def _direct_quote_spans(text: str) -> list[tuple[int, int, str, str]]:
+    return [
+        span
+        for span in _quote_spans(text)
+        if _is_direct_quote(text, span[0], span[1], span[3])
+    ]
 
 
 def _candidate_type(text: str) -> str:
-    if _QUOTED.search(text):
+    if _direct_quote_spans(text):
         return "dialogue"
     if any(marker in text for marker in _INNER_MARKERS):
         return "inner_monologue"
     return "narration"
+
+
+def _has_only_narrative_quotes(text: str) -> bool:
+    spans = _quote_spans(text)
+    return bool(spans) and not any(
+        _is_direct_quote(text, start, end, inner) for start, end, _raw, inner in spans
+    )
+
+
+def _sentence_spans(text: str) -> list[tuple[int, int]]:
+    """引号感知切句；问号、叹号留在完整对白内部，不拆断台词。"""
+    spans: list[tuple[int, int]] = []
+    cursor = 0
+    quote: str | None = None
+    closing = {"“": "”", "「": "」", "『": "』", "‘": "’"}
+    for index, char in enumerate(text):
+        if quote is not None:
+            if char == quote:
+                quote = None
+            continue
+        if char in closing:
+            quote = closing[char]
+            continue
+        if char in _SENTENCE_END:
+            spans.append((cursor, index + 1))
+            cursor = index + 1
+    if cursor < len(text):
+        spans.append((cursor, len(text)))
+    return spans
+
+
+def _atomic_source_segments(text: str) -> list[tuple[int, int, str | None]]:
+    """返回连续原文片段；直接引号整体作为一个对白单元。"""
+    direct = _direct_quote_spans(text)
+    if not direct:
+        return [(start, end, None) for start, end in _sentence_spans(text)]
+    segments: list[tuple[int, int, str | None]] = []
+    cursor = 0
+    for start, end, _raw, inner in direct:
+        for piece_start, piece_end in _sentence_spans(text[cursor:start]):
+            segments.append((cursor + piece_start, cursor + piece_end, None))
+        segments.append((start, end, inner))
+        cursor = end
+    for piece_start, piece_end in _sentence_spans(text[cursor:]):
+        segments.append((cursor + piece_start, cursor + piece_end, None))
+    return segments
+
+
+def _derived_aliases(name: str) -> tuple[str, ...]:
+    cleaned = " ".join((name or "").split())
+    if not cleaned or any(char in cleaned for char in "·• "):
+        return ()
+    found: list[str] = []
+    # 角色名中的“（已故）/（青年）”等整理标注不属于正文称呼；仅在本书
+    # 派生称谓唯一时才启用，避免与另一个正式角色名冲突。
+    annotated = re.fullmatch(r"(.{2,12})[（(][^）)]{1,12}[）)]", cleaned)
+    if annotated:
+        found.append(annotated.group(1))
+    if not 2 <= len(cleaned) <= 4:
+        return tuple(dict.fromkeys(item for item in found if item != cleaned))
+    last = cleaned[-1]
+    if last in {"姐", "哥", "姨", "叔", "爷", "奶", "母", "父", "亲"}:
+        return tuple(found)
+    found.extend([f"{last}姐", f"{last}哥", f"{last}{last}", f"{cleaned[0]}同学"])
+    # “民警老周”等职业前缀姓名在正文中常直接称呼为“老周”。仅在本书
+    # 派生称谓唯一时才会启用，避免把常见姓氏或称谓误绑到多个角色。
+    role_prefix = re.match(
+        r"^(?:民警|警察|医生|护士|老师|师傅|老板|经理|店长|队长|校长|教授)"
+        r"(老.{1,2}|小.{1,2})$",
+        cleaned,
+    )
+    if role_prefix:
+        found.append(role_prefix.group(1))
+    return tuple(dict.fromkeys(item for item in found if item != cleaned))
 
 
 @dataclass(frozen=True)
@@ -290,6 +549,7 @@ class _ChunkOutcome:
     failure_reason: str | None = None
     invalid_quotes: int = 0
     filled_chars: int = 0
+    aligned_chars: int = 0
 
 
 class ScriptService:
@@ -319,6 +579,11 @@ class ScriptService:
         chapter = session.get(Chapter, chapter_id)
         if chapter is None:
             raise NotFoundError("章节不存在")
+        if not chapter.analysis_included:
+            raise ValidationError(
+                "该章节当前未纳入分析；如确需生成剧本，请先在章节设置中开启。",
+                code="chapter_excluded",
+            )
         return chapter, self._book(session, chapter.book_id)
 
     def _active_job(self, session: Session, chapter_id: str) -> GenerationJob | None:
@@ -474,6 +739,9 @@ class ScriptService:
                 cleaned = _clean_name(name)
                 if cleaned and cleaned != row.canonical_name and cleaned not in aliases:
                     aliases.append(cleaned)
+            for derived in _derived_aliases(row.canonical_name):
+                if derived not in aliases:
+                    aliases.append(derived)
             item = {
                 "canonical_name": row.canonical_name,
                 "aliases": aliases,
@@ -499,11 +767,11 @@ class ScriptService:
                         break
                 if len(candidates) >= 24:
                     break
-        budget = 6000
-        for item in candidates[:48]:
+        budget = 9000
+        for item in candidates[:64]:
             cleaned = {
                 "canonical_name": item["canonical_name"],
-                "aliases": list(item["aliases"])[:6],
+                "aliases": list(item["aliases"])[:12],
                 "gender": item["gender"],
                 "age_range": item["age_range"],
                 "identity_description": _clean_text(item["identity_description"], 60),
@@ -522,6 +790,7 @@ class ScriptService:
     ) -> tuple[dict[str, list[Character]], dict[str, list[Character]]]:
         canonical: dict[str, list[Character]] = {}
         aliases: dict[str, list[Character]] = {}
+        derived: dict[str, list[Character]] = {}
         for row in characters:
             canonical.setdefault(_norm(row.canonical_name), []).append(row)
             for alias in row.aliases_json or []:
@@ -529,6 +798,13 @@ class ScriptService:
                 cleaned = _clean_name(name)
                 if cleaned:
                     aliases.setdefault(_norm(cleaned), []).append(row)
+            for name in _derived_aliases(row.canonical_name):
+                derived.setdefault(_norm(name), []).append(row)
+        # 仅当派生称谓在本书唯一时才自动归并，避免“X姐/X哥”误绑多人。
+        for key, rows in derived.items():
+            unique = {row.id: row for row in rows}
+            if len(unique) == 1:
+                aliases[key] = list(unique.values())
         return canonical, aliases
 
     def _resolve_character(
@@ -548,9 +824,243 @@ class ScriptService:
             return None, "ambiguous"
         return None, "unknown"
 
+    @staticmethod
+    def _mask_quotes(text: str) -> str:
+        chars = list(text)
+        for start, end, _raw, _inner in _direct_quote_spans(text):
+            for index in range(start, end):
+                if chars[index] != "\n":
+                    chars[index] = " "
+        return "".join(chars)
+
+    def _infer_dialogue_speaker(
+        self,
+        source_text: str,
+        quote_start: int,
+        quote_end: int,
+        context_text: str,
+        canonical: dict[str, list[Character]],
+        aliases: dict[str, list[Character]],
+    ) -> tuple[Character | None, str | None]:
+        """从前置/后置说话动作及紧邻上下文消解说话人。"""
+        names: dict[str, Character] = {}
+        for key, rows in {**aliases, **canonical}.items():
+            unique = {row.id: row for row in rows}
+            if len(unique) == 1:
+                names[key] = next(iter(unique.values()))
+        if not names:
+            return None, "no_registered_names"
+        pattern = re.compile("|".join(re.escape(key) for key in sorted(names, key=len, reverse=True)))
+        scored: dict[str, tuple[int, Character]] = {}
+
+        def scan(
+            text: str,
+            *,
+            local: bool,
+            quote_start_override: int | None = None,
+            quote_end_override: int | None = None,
+        ) -> None:
+            masked = self._mask_quotes(text)
+            local_start = quote_start if quote_start_override is None else quote_start_override
+            local_end = quote_end if quote_end_override is None else quote_end_override
+            matches = list(pattern.finditer(masked))
+            for position, match in enumerate(matches):
+                character = names[match.group(0)]
+                score = 0
+                if local:
+                    if match.end() <= local_start:
+                        gap = text[match.end() : local_start]
+                        # “他看向陆远：……”里的陆远是听话人，不是说话人。
+                        # 向前寻找最近的角色动作主体；允许跨一个完整句子，以覆盖
+                        # “老周拿出手机说明情况。等待时，他看向陆远：……”这类写法。
+                        addressed = bool(
+                            re.fullmatch(r"\s*[:：，,]\s*", gap)
+                            and re.search(
+                                r"(?:看向|望向|望着|看着|转向|朝向|朝|对|向|问|询问)\s*$",
+                                text[max(0, match.start() - 16) : match.start()],
+                            )
+                        )
+                        if addressed:
+                            previous = next(
+                                (
+                                    item
+                                    for item in reversed(matches[:position])
+                                    if item.end() <= match.start()
+                                ),
+                                None,
+                            )
+                            if previous is not None:
+                                bridge = text[previous.end() : match.start()]
+                                if len(bridge) <= 160 and sum(
+                                    char in bridge for char in "。！？!?；;"
+                                ) <= 2:
+                                    speaker = names[previous.group(0)]
+                                    scored[speaker.id] = (6, speaker)
+                            continue
+                        explicit_tag = bool(_SPEECH_CUES.search(gap[-30:])) or bool(
+                            re.fullmatch(r"\s*[:：，,]\s*", gap)
+                        )
+                        if not any(mark in gap for mark in "。！？!?；;\n") and explicit_tag:
+                            score = 6
+                    elif match.start() >= local_end:
+                        gap = text[local_end : match.end() + 4]
+                        # 下一句的说话动作不能反过来绑定上一句台词；句末标点可能位于后引号内。
+                        quote_ends_sentence = (
+                            local_end >= 2 and text[local_end - 2] in "。！？!?；;"
+                        )
+                        if (
+                            not quote_ends_sentence
+                            and not any(mark in gap for mark in "。！？!?；;\n")
+                            and _SPEECH_CUES.search(gap[:30])
+                        ):
+                            score = 6
+                else:
+                    before = text[max(0, match.start() - 30) : match.start()]
+                    after = text[match.end() : match.end() + 30]
+                    if _SPEECH_CUES.search(before):
+                        score = 6
+                    elif _SPEECH_CUES.search(after):
+                        score = 5
+                if score <= 0:
+                    continue
+                previous = scored.get(character.id)
+                if previous is None or score > previous[0]:
+                    scored[character.id] = (score, character)
+
+        scan(source_text, local=True)
+        if not any(score >= 3 for score, _character in scored.values()):
+            scored.clear()
+            context_start = context_text.find(source_text)
+            if context_start >= 0:
+                context_quote_start = context_start + quote_start
+                context_quote_end = context_start + quote_end
+                scan(
+                    context_text,
+                    local=True,
+                    quote_start_override=context_quote_start,
+                    quote_end_override=context_quote_end,
+                )
+                if not any(score >= 3 for score, _character in scored.values()):
+                    # 常见写法是上一句先写角色动作，下一句直接给台词。只接受最近且
+                    # 没有跨越多句的角色提及，避免把整章上下文中的角色混在一起。
+                    masked = self._mask_quotes(context_text)
+                    before = masked[:context_quote_start]
+                    matches = list(pattern.finditer(before))
+                    if matches:
+                        nearest = matches[-1]
+                        gap = before[nearest.end() :]
+                        if len(gap) <= 100 and sum(
+                            mark in "。！？!?；;" for mark in gap
+                        ) <= 1:
+                            character = names[nearest.group(0)]
+                            scored[character.id] = (4, character)
+            if not scored:
+                scored.clear()
+                scan(context_text, local=False)
+        if not scored:
+            return None, "no_context_speaker"
+        ranked = sorted(scored.values(), key=lambda item: item[0], reverse=True)
+        if len(ranked) > 1 and ranked[0][0] == ranked[1][0]:
+            return None, "ambiguous_context_speaker"
+        return ranked[0][1], "context_speaker_resolved"
+
+    def _expand_source_draft(
+        self,
+        draft: ScriptUnitDraft,
+        source_text: str,
+        context_text: str,
+        canonical: dict[str, list[Character]],
+        aliases: dict[str, list[Character]],
+    ) -> list[ScriptUnitDraft]:
+        """把模型大单元中的直接引号拆开；多引号时不复制模型说话人。"""
+        direct = _direct_quote_spans(source_text)
+        if draft.unit_type in SCRIPT_CUE_TYPES or not direct:
+            return [draft]
+        if draft.unit_type == "narration" and _has_only_narrative_quotes(source_text):
+            return [draft]
+        model_speaker: Character | None = None
+        if len(direct) == 1 and draft.speaker_name:
+            model_speaker, _ = self._resolve_character(
+                draft.speaker_name, canonical, aliases
+            )
+        expanded: list[ScriptUnitDraft] = []
+        for start, end, inner in _atomic_source_segments(source_text):
+            piece = source_text[start:end]
+            if not piece.strip():
+                continue
+            if inner is None:
+                expanded.append(
+                    draft.model_copy(
+                        update={
+                            "unit_type": "narration",
+                            "source_text": piece,
+                            "text": piece,
+                            "display_text": piece,
+                            "speaker_type": "narrator",
+                            "speaker_name": None,
+                        }
+                    )
+                )
+                continue
+            speaker = model_speaker
+            if speaker is None:
+                speaker, reason = self._infer_dialogue_speaker(
+                    source_text, start, end, context_text, canonical, aliases
+                )
+            confidence = max(
+                float(draft.confidence or 0.0),
+                0.9 if model_speaker else 0.85
+                if speaker and _SPEECH_CUES.search(source_text)
+                else 0.75 if speaker else 0.5,
+            )
+            expanded.append(
+                draft.model_copy(
+                    update={
+                        "unit_type": "dialogue",
+                        "source_text": piece,
+                        "text": " ".join(inner.split()),
+                        "display_text": piece,
+                        "speaker_type": "character" if speaker else "unknown",
+                        "speaker_name": speaker.canonical_name if speaker else None,
+                        "confidence": confidence,
+                    }
+                )
+            )
+        return expanded
+
+    @staticmethod
+    def _inherit_performance(units: list[_UnitPlan]) -> None:
+        previous: _UnitPlan | None = None
+        for unit in units:
+            if unit.unit_type != "dialogue" or not unit.speaker_id:
+                if (
+                    previous is not None
+                    and unit.unit_type in {"narration", "inner_monologue"}
+                    and len(unit.source_text.strip()) <= 60
+                ):
+                    continue
+                previous = None
+                continue
+            if previous is not None and previous.speaker_id == unit.speaker_id:
+                if unit.emotion == "neutral" and previous.emotion != "neutral":
+                    unit.emotion = previous.emotion
+                if unit.delivery == "normal" and previous.delivery != "normal":
+                    unit.delivery = previous.delivery
+                if unit.intensity <= 1 and previous.intensity > 1:
+                    unit.intensity = previous.intensity
+                if not unit.tts_instruction and previous.tts_instruction:
+                    unit.tts_instruction = previous.tts_instruction
+            previous = unit
+
     # ------------------------------------------------------------ start/cancel
 
-    def start_script(self, chapter_id: str, adaptation_level: str = "light") -> AnalysisJobOut:
+    def start_script(
+        self,
+        chapter_id: str,
+        adaptation_level: str = "light",
+        *,
+        retry_scenes: bool = False,
+    ) -> AnalysisJobOut:
         adaptation = (adaptation_level or "light").strip().lower()
         if adaptation not in {"light", "standard", "strong"}:
             raise ValidationError("改编档位只能是 light / standard / strong", code="invalid_adaptation")
@@ -561,22 +1071,25 @@ class ScriptService:
                     "本章正在生成有声剧本，请等待当前任务结束或先取消",
                     code="script_analysis_running",
                 )
-            if chapter.scene_version <= 0:
-                raise ValidationError(
-                    "请先生成并确认本章分场，再生成有声剧本",
-                    code="scenes_required",
-                )
             scenes = self._scene_rows(session, chapter)
-            if not scenes:
+            if not scenes and not retry_scenes:
+                if chapter.scene_version <= 0:
+                    raise ValidationError(
+                        "请先生成并确认本章分场，再生成有声剧本",
+                        code="scenes_required",
+                    )
                 raise ValidationError(
                     "当前分场版本没有可用场景，请重新生成分场",
                     code="scenes_required",
                 )
-            source = BookService(self.settings, session).read_source(book)
-            scene_sources = self._scene_sources(session, chapter, source, scenes)
-            chunks = self._chunks(scene_sources)
-            if not chunks:
-                raise ValidationError("章节没有可用原文，无法生成剧本", code="chapter_empty")
+            if scenes:
+                source = BookService(self.settings, session).read_source(book)
+                scene_sources = self._scene_sources(session, chapter, source, scenes)
+                chunks = self._chunks(scene_sources)
+                if not chunks:
+                    raise ValidationError("章节没有可用原文，无法生成剧本", code="chapter_empty")
+            else:
+                chunks = []
             max_version = int(
                 session.scalar(
                     select(func.max(ScriptVersion.version)).where(
@@ -606,7 +1119,8 @@ class ScriptService:
                     "scene_version": chapter.scene_version,
                     "adaptation_level": adaptation,
                     "chunks": len(chunks),
-                    "scenes": len(scene_sources),
+                    "scenes": len(scene_sources) if scenes else 0,
+                    "retry_scenes": retry_scenes and not scenes,
                 },
                 result_json={},
                 created_at=utc_now(),
@@ -664,22 +1178,29 @@ class ScriptService:
             job = self._latest_job(session, chapter.id)
             active = job is not None and job.status in ACTIVE_JOB_STATUSES
             version = self._active_version(session, chapter.id)
-            _, conditions = self._review_scope(session, chapter)
-            open_reviews = int(
-                session.scalar(
-                    select(func.count(ReviewItem.id)).where(
+            _, conditions = stage_review_scope(session, chapter, "script", version)
+            open_reviews = sum(
+                1
+                for item in session.scalars(
+                    select(ReviewItem).where(
                         ReviewItem.book_id == book.id,
+                        ReviewItem.category == "content",
                         ReviewItem.status == "open",
                         ReviewItem.code.startswith("script_"),
                         or_(*conditions),
                     )
                 )
-                or 0
+                if policy_for(item.code, category=item.category).actionable
             )
+            blocking = has_open_blocking(session, book.id, "script", conditions)
             return ScriptStatusResponse(
                 chapter_id=chapter.id,
                 book_id=book.id,
-                script_status="running" if active else chapter.script_status,
+                script_status=effective_stage_status(
+                    chapter.script_status,
+                    active=active,
+                    blocking=blocking,
+                ),
                 script_version=version.version if version else 0,
                 adaptation_level=version.adaptation_level if version else None,
                 open_reviews=open_reviews,
@@ -717,37 +1238,138 @@ class ScriptService:
                     )
                 ).all()
             ) if units else {}
-            _, conditions = self._review_scope(session, chapter)
-            reviews = list(
-                session.scalars(
+            _, conditions = stage_review_scope(session, chapter, "script", row)
+            reviews = [
+                item
+                for item in session.scalars(
                     select(ReviewItem)
                     .where(
                         ReviewItem.book_id == book.id,
+                        ReviewItem.category == "content",
                         ReviewItem.status == "open",
                         ReviewItem.code.startswith("script_"),
                         or_(*conditions),
                     )
                     .order_by(ReviewItem.created_at.asc(), ReviewItem.id.asc())
                 )
-            )
+                if policy_for(item.code, category=item.category).actionable
+            ]
+            blocking_unit_ids = {
+                item.entity_id
+                for item in reviews
+                if item.severity == "blocking"
+                and item.entity_type == "script_unit"
+                and item.entity_id
+            }
+            blocking = any(item.severity == "blocking" for item in reviews)
             return ScriptStateResponse(
                 chapter_id=chapter.id,
                 book_id=book.id,
-                script_status="running" if active else chapter.script_status,
+                script_status=effective_stage_status(
+                    chapter.script_status,
+                    active=active,
+                    blocking=blocking,
+                ),
                 script_version=row.version if row else 0,
                 adaptation_level=row.adaptation_level if row else None,
                 open_reviews=len(reviews),
                 job=to_job_out(job) if job else None,
-                version=self._version_out(row, len(units)) if row else None,
+                version=(
+                    self._version_out(
+                        row,
+                        len(units),
+                        blocking=blocking,
+                    )
+                    if row
+                    else None
+                ),
                 units=[
                     self._unit_out(
                         unit,
                         names.get(unit.speaker_id),
                         voices.get(unit.id),
+                        blocking=unit.id in blocking_unit_ids,
                     )
                     for unit in units
                 ],
                 review_items=[self._review_out(item) for item in reviews],
+            )
+
+    def update_unit_speaker(
+        self, unit_id: str, payload: ScriptUnitSpeakerUpdate
+    ) -> ScriptUnitOut:
+        """用户确认问题台词的说话人；只允许当前版本与本书角色。"""
+        validate_id(unit_id, "unit")
+        with session_scope(self.session_factory) as session:
+            unit = session.get(ScriptUnit, unit_id)
+            if unit is None:
+                raise NotFoundError("剧本单元不存在")
+            version = session.get(ScriptVersion, unit.script_version_id)
+            if version is None or not version.is_active:
+                raise ConflictError("历史剧本版本不可修改", code="script_version_inactive")
+            if unit.unit_type not in {"dialogue", "inner_monologue", "narration"}:
+                raise ValidationError("该剧本单元不支持设置说话人")
+            speaker_name = "未知"
+            if payload.speaker_type == "character":
+                validate_id(payload.speaker_id or "", "char")
+                character = session.get(Character, payload.speaker_id)
+                if (
+                    character is None
+                    or character.book_id != unit.book_id
+                    or character.merged_into_id is not None
+                ):
+                    raise ValidationError("说话人必须是本书的有效角色")
+                speaker_name = character.canonical_name
+            elif payload.speaker_type == "narrator":
+                if payload.speaker_id:
+                    raise ValidationError("旁白不需要角色 ID")
+                speaker_name = "旁白"
+            elif payload.speaker_id:
+                raise ValidationError("未知说话人不能绑定角色")
+            unit.speaker_type = payload.speaker_type
+            unit.speaker_id = (
+                payload.speaker_id if payload.speaker_type == "character" else None
+            )
+            unit.speaker_name_snapshot = speaker_name
+            unit.voice_cast_id = None
+            unit.review_status = "approved"
+            unit.source = "user"
+            locked = list(unit.user_locked_fields_json or [])
+            for field in ("speaker_type", "speaker_id"):
+                if field not in locked:
+                    locked.append(field)
+            unit.user_locked_fields_json = locked
+            unit.updated_at = utc_now()
+            refresh_stale_units(session, [unit])
+            session.flush()
+            unresolved = session.scalar(
+                select(func.count(ScriptUnit.id)).where(
+                    ScriptUnit.script_version_id == version.id,
+                    ScriptUnit.unit_type == "dialogue",
+                    ScriptUnit.speaker_type != "character",
+                )
+            )
+            if not unresolved:
+                reviews = list(
+                    session.scalars(
+                        select(ReviewItem).where(
+                            ReviewItem.book_id == unit.book_id,
+                            ReviewItem.entity_type == "chapter",
+                            ReviewItem.entity_id == unit.chapter_id,
+                            ReviewItem.code == "script_unresolved_speaker",
+                            ReviewItem.status == "open",
+                        )
+                    )
+                )
+                for review in reviews:
+                    review.status = "resolved"
+                    review.resolution_note = "所有问题台词的说话人均已确认。"
+                    review.resolved_at = review.updated_at = utc_now()
+            names = {unit.speaker_id: speaker_name} if unit.speaker_id else {}
+            voices = resolve_unit_voices(session, [unit])
+            session.commit()
+            return self._unit_out(
+                unit, names.get(unit.speaker_id), voices.get(unit.id)
             )
 
     def list_versions(self, chapter_id: str) -> ScriptVersionListResponse:
@@ -771,7 +1393,19 @@ class ScriptService:
             ) if rows else {}
             return ScriptVersionListResponse(
                 chapter_id=chapter.id,
-                items=[self._version_out(row, int(counts.get(row.id, 0))) for row in rows],
+                items=[
+                    self._version_out(
+                        row,
+                        int(counts.get(row.id, 0)),
+                        blocking=has_open_blocking(
+                            session,
+                            row.book_id,
+                            "script",
+                            stage_review_scope(session, chapter, "script", row)[1],
+                        ),
+                    )
+                    for row in rows
+                ],
                 total=len(rows),
             )
 
@@ -798,12 +1432,17 @@ class ScriptService:
                     active.updated_at = utc_now()
             session.flush()
             row.is_active = True
+            conditions = stage_review_scope(session, chapter, "script", row)[1]
+            blocking = has_open_blocking(session, row.book_id, "script", conditions)
             if approve:
                 row.status = "approved"
                 row.approved_at = utc_now()
+            else:
+                row.status = effective_version_status(row.status, blocking=blocking)
             row.updated_at = utc_now()
-            chapter.script_status = (
-                "needs_review" if row.status == "needs_review" else "completed"
+            chapter.script_status = effective_stage_status(
+                chapter.script_status,
+                blocking=blocking,
             )
             chapter.updated_at = utc_now()
             count = int(
@@ -818,10 +1457,73 @@ class ScriptService:
 
     # ---------------------------------------------------------------- worker
 
+    def _retry_scene_prerequisite(self, job_id: str) -> bool:
+        """手动重试时分场与剧本串行执行；返回 False 表示父剧本任务已取消。"""
+        with session_scope(self.session_factory) as session:
+            job = session.get(GenerationJob, job_id)
+            if job is None or job.status == "cancelled":
+                return False
+            params = dict(job.params_json or {})
+            if not params.get("retry_scenes"):
+                return True
+            chapter = session.get(Chapter, job.target_id or "")
+            if chapter is None:
+                raise NotFoundError("章节不存在")
+            if self._scene_rows(session, chapter):
+                return True
+        scene_service = SceneService(self.settings, self.session_factory, self.registry)
+        child = scene_service.start_scene_analysis(chapter.id)
+        with session_scope(self.session_factory) as session:
+            job = session.get(GenerationJob, job_id)
+            if job is None or job.status == "cancelled":
+                try:
+                    scene_service.cancel_scene_analysis(chapter.id)
+                except ConflictError:
+                    pass
+                return False
+            params = dict(job.params_json or {})
+            params["scene_prerequisite_job_id"] = child.id
+            job.params_json = params
+            job.result_json = {
+                **dict(job.result_json or {}),
+                "stage": "scenes",
+                "scene_job_id": child.id,
+            }
+        while True:
+            time.sleep(0.1)
+            with session_scope(self.session_factory) as session:
+                job = session.get(GenerationJob, job_id)
+                if job is None or job.status == "cancelled":
+                    try:
+                        scene_service.cancel_scene_analysis(chapter.id)
+                    except ConflictError:
+                        pass
+                    return False
+                scene_job = session.get(GenerationJob, child.id)
+                if scene_job is None:
+                    raise AppError("分场重试任务丢失", status_code=502, code="scenes_required")
+                if scene_job.status not in ACTIVE_JOB_STATUSES:
+                    break
+                job.result_json = {
+                    **dict(job.result_json or {}),
+                    "stage": "scenes",
+                    "scene_progress": scene_job.progress,
+                }
+        if scene_job.status != "completed":
+            reason = scene_job.error_message or "本章分场重试失败"
+            raise AppError(reason, status_code=502, code="scene_retry_failed")
+        with session_scope(self.session_factory) as session:
+            job = session.get(GenerationJob, job_id)
+            if job is not None:
+                job.result_json = {**dict(job.result_json or {}), "stage": "script"}
+        return True
+
     def _run_job(self, job_id: str) -> None:
         started = _iso_now()
         started_perf = time.perf_counter()
         try:
+            if not self._retry_scene_prerequisite(job_id):
+                return
             with session_scope(self.session_factory) as session:
                 job = session.get(GenerationJob, job_id)
                 if job is None or job.status == "cancelled":
@@ -877,12 +1579,23 @@ class ScriptService:
             filled_chars = 0
             valid_chunks = 0
             last_error: Exception | None = None
+            last_failure: str | None = None
+            chunks_by_scene: dict[str, list[Any]] = {}
+            for item in chunks:
+                chunks_by_scene.setdefault(item.scene.id, []).append(item)
 
             for chunk in chunks:
                 with session_scope(self.session_factory) as session:
                     job = session.get(GenerationJob, job_id)
                     if job is None or job.status == "cancelled":
                         return
+                scene_chunks = chunks_by_scene.get(chunk.scene.id, [])
+                chunk_position = next(
+                    (position for position, item in enumerate(scene_chunks) if item.index == chunk.index),
+                    0,
+                )
+                previous_chunk = scene_chunks[chunk_position - 1] if chunk_position > 0 else None
+                next_chunk = scene_chunks[chunk_position + 1] if chunk_position + 1 < len(scene_chunks) else None
                 context = {
                     "book_title": book_title,
                     "chapter_title": chapter_title,
@@ -897,30 +1610,33 @@ class ScriptService:
                     },
                     "speaker_states": list(chunk.scene.states),
                     "chunk": {"index": chunk.index, "total": chunk.total},
+                    "adjacent_source": {
+                        "before": previous_chunk.text[-500:] if previous_chunk else "",
+                        "after": next_chunk.text[:500] if next_chunk else "",
+                    },
                 }
                 result: ChapterScriptResult | None = None
                 failure_reason: str | None = None
-                try:
-                    result = self.registry.llm.adapt_scene_script(
-                        chunk.text, known, context
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    last_error = exc
-                    failure_reason = (
-                        f"{type(exc).__name__}: "
-                        f"{_clean_text(getattr(exc, 'message', str(exc)), 300)}"
-                    )
+                for attempt in range(2):
+                    try:
+                        result = self.registry.llm.adapt_scene_script(
+                            chunk.text, known, context
+                        )
+                        failure_reason = None
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        last_error = exc
+                        result = None
+                        failure_reason = (
+                            f"{type(exc).__name__}: "
+                            f"{_clean_text(getattr(exc, 'message', str(exc)), 300)}"
+                        )
+                        if attempt == 0:
+                            logger.warning("剧本分块 %s/%s 首次调用失败，自动重试：%s", chunk.index, chunk.total, failure_reason)
+                            time.sleep(0.25)
                 if result is not None and not result.units:
                     failure_reason = "模型未返回剧本单元"
                 if result is not None and result.units:
-                    valid_chunks += 1
-                    calls.append(
-                        {
-                            "scene": chunk.scene.scene_index,
-                            "chunk": chunk.index,
-                            "call": dict(result.meta or {}),
-                        }
-                    )
                     outcome = self._plan_chunk(
                         result,
                         chunk,
@@ -929,15 +1645,37 @@ class ScriptService:
                         alias_index,
                         start_index=len(all_units),
                     )
-                    all_units.extend(outcome.units)
-                    chapter_reviews.extend(outcome.reviews)
-                    notes.extend(
-                        note
-                        for note in (_clean_text(item, 300) for item in result.notes)
-                        if note
-                    )
-                    invalid_quotes += outcome.invalid_quotes
-                    filled_chars += outcome.filled_chars
+                    source_chars = len(chunk.text.strip())
+                    if (
+                        not outcome.units
+                        or outcome.aligned_chars < max(1, int(source_chars * 0.5))
+                    ):
+                        failure_reason = (
+                            "模型剧本原文对齐率不足"
+                            f"（{outcome.aligned_chars}/{source_chars} 字符），已回退"
+                        )
+                        last_failure = failure_reason
+                        result = None
+                    else:
+                        valid_chunks += 1
+                        calls.append(
+                            {
+                                "scene": chunk.scene.scene_index,
+                                "chunk": chunk.index,
+                                "call": dict(result.meta or {}),
+                                "aligned_chars": outcome.aligned_chars,
+                                "source_chars": source_chars,
+                            }
+                        )
+                        all_units.extend(outcome.units)
+                        chapter_reviews.extend(outcome.reviews)
+                        notes.extend(
+                            note
+                            for note in (_clean_text(item, 300) for item in result.notes)
+                            if note
+                        )
+                        invalid_quotes += outcome.invalid_quotes
+                        filled_chars += outcome.filled_chars
                 if failure_reason is not None:
                     logger.warning(
                         "剧本场景 %s 分块 %s/%s 回退：%s",
@@ -954,7 +1692,16 @@ class ScriptService:
                         }
                     )
                     fallback = self._fallback_chunk(
-                        chunk, chapter.id, start_index=len(all_units)
+                        chunk,
+                        chapter.id,
+                        canonical,
+                        alias_index,
+                        {
+                            str(state.get("character_id") or ""): state
+                            for state in chunk.scene.states
+                            if state.get("character_id")
+                        },
+                        start_index=len(all_units),
                     )
                     all_units.extend(fallback.units)
                     chapter_reviews.extend(fallback.reviews)
@@ -972,7 +1719,9 @@ class ScriptService:
                     }
 
             if valid_chunks == 0:
-                reason = str(last_error) if last_error is not None else "模型未返回可用的剧本结果"
+                reason = last_failure or (
+                    str(last_error) if last_error is not None else "模型未返回可用的剧本结果"
+                )
                 raise AppError(
                     f"剧本模型未返回可用结果：{_clean_text(reason, 300)}",
                     status_code=502,
@@ -1131,20 +1880,23 @@ class ScriptService:
         cursor = 0
         invalid = 0
         filled = 0
+        aligned = 0
         states_by_character = {
             str(state.get("character_id") or ""): state
             for state in chunk.scene.states
             if state.get("character_id")
         }
+        match_index = _source_match_index(chunk.text)
         for draft in result.units:
             quote = (draft.source_text or "").strip()
             if not quote:
                 invalid += 1
                 continue
-            local = chunk.text.find(quote, cursor)
-            if local < 0:
+            span = _find_source_span(quote, chunk.text, cursor, match_index)
+            if span is None:
                 invalid += 1
                 continue
+            local, source_end = span
             if local > cursor:
                 gap = chunk.text[cursor:local]
                 if gap.strip():
@@ -1153,28 +1905,45 @@ class ScriptService:
                         cursor,
                         local,
                         chapter_id,
+                        canonical,
+                        aliases,
+                        states_by_character,
                         start_index=start_index + len(units),
                     )
                     units.extend(fill_units)
                     filled += len(gap.strip())
-            source_text = chunk.text[local : local + len(quote)]
+            source_text = chunk.text[local:source_end]
             source_start = chunk.abs_start + local
-            source_end = source_start + len(source_text)
-            plan = self._plan_unit(
-                draft,
-                chunk,
-                source_text,
-                source_start,
-                source_end,
-                chapter_id,
-                canonical,
-                aliases,
-                states_by_character,
-            )
-            if plan is not None:
-                plan.meta["unit_index"] = start_index + len(units)
-                units.append(plan)
-            cursor = local + len(quote)
+            context_text = chunk.text[
+                max(0, local - 220) : min(len(chunk.text), source_end + 320)
+            ]
+            piece_cursor = 0
+            for piece_draft in self._expand_source_draft(
+                draft, source_text, context_text, canonical, aliases
+            ):
+                piece = piece_draft.source_text or ""
+                piece_local = source_text.find(piece, piece_cursor)
+                if piece_local < 0:
+                    invalid += 1
+                    continue
+                piece_start = source_start + piece_local
+                plan = self._plan_unit(
+                    piece_draft,
+                    chunk,
+                    piece,
+                    piece_start,
+                    piece_start + len(piece),
+                    chapter_id,
+                    canonical,
+                    aliases,
+                    states_by_character,
+                )
+                if plan is not None:
+                    plan.meta["unit_index"] = start_index + len(units)
+                    units.append(plan)
+                    aligned += len(piece.strip())
+                piece_cursor = piece_local + len(piece)
+            cursor = source_end
         if cursor < len(chunk.text):
             tail = chunk.text[cursor:]
             if tail.strip():
@@ -1183,10 +1952,14 @@ class ScriptService:
                     cursor,
                     len(chunk.text),
                     chapter_id,
+                    canonical,
+                    aliases,
+                    states_by_character,
                     start_index=start_index + len(units),
                 )
                 units.extend(fill_units)
                 filled += len(tail.strip())
+        self._inherit_performance(units)
         return _ChunkOutcome(
             units=units,
             reviews=reviews,
@@ -1194,7 +1967,48 @@ class ScriptService:
             notes=[],
             invalid_quotes=invalid,
             filled_chars=filled,
+            aligned_chars=aligned,
         )
+
+    def _unquoted_dialogue(
+        self,
+        source_text: str,
+        canonical: dict[str, list[Character]],
+        aliases: dict[str, list[Character]],
+    ) -> tuple[Character, str] | None:
+        """只识别带明确说话动作的无引号对白，避免把普通叙述误判为台词。"""
+        if _quote_spans(source_text):
+            return None
+        names: dict[str, Character] = {}
+        for rows in [*aliases.values(), *canonical.values()]:
+            unique = {row.id: row for row in rows}
+            if len(unique) == 1:
+                row = next(iter(unique.values()))
+                names[row.canonical_name] = row
+        for name in sorted(names, key=len, reverse=True):
+            escaped = re.escape(name)
+            prefix = re.search(
+                rf"(?:^|[。！？!?]\s*){escaped}[^，。！？!?]{{0,10}}"
+                rf"(?:说|问|答|喊|叫|道)[：:，]\s*(?P<speech>[^。！？!?]+[。！？!?]?)",
+                source_text,
+            )
+            if (
+                prefix
+                and any(char.isalnum() for char in prefix.group("speech"))
+            ):
+                return names[name], prefix.group("speech").strip()
+            suffix = re.search(
+                rf"(?P<speech>[^。！？!?]+?)[，,]?\s*{escaped}"
+                rf"[^，。！？!?]{{0,8}}(?:说|问|答|喊|叫|道)[。！？!?]",
+                source_text,
+            )
+            if (
+                suffix
+                and any(char.isalnum() for char in suffix.group("speech"))
+                and not suffix.group("speech").lstrip().startswith(("”", "」", "』", "’"))
+            ):
+                return names[name], suffix.group("speech").strip()
+        return None
 
     def _plan_unit(
         self,
@@ -1213,8 +2027,18 @@ class ScriptService:
             unit_type = _candidate_type(source_text)
         if unit_type == "unknown":
             unit_type = _candidate_type(source_text)
+        if unit_type == "dialogue" and _has_only_narrative_quotes(source_text):
+            unit_type = "narration"
         is_cue = unit_type in SCRIPT_CUE_TYPES
+        unquoted = None
+        if unit_type == "narration":
+            unquoted = self._unquoted_dialogue(source_text, canonical, aliases)
+            if unquoted is not None:
+                unit_type = "dialogue"
+                is_cue = False
         raw_text = (draft.text or "").strip()
+        if unquoted is not None:
+            raw_text = unquoted[1]
         if is_cue:
             text = ""
         else:
@@ -1240,7 +2064,9 @@ class ScriptService:
             delivery = "normal"
         intensity = max(1, min(3, int(draft.intensity or 1)))
         speed = max(0.5, min(2.0, float(draft.speed or 1.0)))
-        speaker_candidate = _clean_name(draft.speaker_name or "")
+        speaker_candidate = _clean_name(
+            unquoted[0].canonical_name if unquoted is not None else draft.speaker_name or ""
+        )
         if not is_cue:
             if unit_type in {"narration", "inner_monologue"}:
                 speaker_type = "narrator"
@@ -1265,10 +2091,6 @@ class ScriptService:
                 speaker_type = "unknown"
 
         review_status = "auto"
-        if unit_type == "unknown" or (unit_type == "dialogue" and speaker_type != "character"):
-            review_status = "needs_review"
-        if _clamp(draft.confidence) < self.confidence_threshold:
-            review_status = "needs_review"
         evidence = _evidence_dicts(draft.evidence, chapter_id)
         if not evidence:
             evidence = [
@@ -1310,7 +2132,7 @@ class ScriptService:
             pause_after_ms=max(0, min(5000, int(draft.pause_after_ms or 250))),
             sfx_json=sfx,
             review_status=review_status,
-            confidence=_clamp(draft.confidence),
+            confidence=max(_clamp(draft.confidence), 0.8 if unquoted is not None else 0.0),
             evidence=evidence,
             source="ai",
             meta={
@@ -1329,64 +2151,102 @@ class ScriptService:
         start: int,
         end: int,
         chapter_id: str,
+        canonical: dict[str, list[Character]],
+        aliases: dict[str, list[Character]],
+        states_by_character: dict[str, dict[str, Any]],
         *,
         start_index: int,
     ) -> list[_UnitPlan]:
         gap_text = chunk.text[start:end]
         if not gap_text.strip():
             return []
+        context_text = chunk.text[
+            max(0, start - 220) : min(len(chunk.text), end + 320)
+        ]
         units: list[_UnitPlan] = []
-        for sentence in _SENTENCE.finditer(gap_text):
-            raw = sentence.group(0)
-            if not raw.strip():
-                continue
-            lead = len(raw) - len(raw.lstrip())
-            trail = len(raw.rstrip())
-            content = raw[lead:trail]
+        for local_start, local_end, inner in _atomic_source_segments(gap_text):
+            content = gap_text[local_start:local_end]
+            lead = len(content) - len(content.lstrip())
+            trail = len(content.rstrip())
+            content = content[lead:trail]
             if not content:
                 continue
-            local_start = start + sentence.start() + lead
+            local_start += lead
             local_end = local_start + len(content)
-            unit_type = _candidate_type(content)
-            speaker_type = "narrator" if unit_type != "dialogue" else "unknown"
-            text = content
-            if unit_type == "dialogue":
-                quoted = _QUOTED.search(content)
-                if quoted and quoted.group(1).strip():
-                    text = " ".join(quoted.group(1).split())
-            units.append(
-                _UnitPlan(
-                    unit_type=unit_type,
-                    source_text=content,
-                    text=" ".join(text.split()),
-                    display_text=content,
-                    source_start_offset=chunk.abs_start + local_start,
-                    source_end_offset=chunk.abs_start + local_end,
-                    scene_id=chunk.scene.id,
-                    speaker_type=speaker_type,
-                    review_status="needs_review",
-                    confidence=0.2,
-                    evidence=[
-                        {
-                            "chapter_id": chapter_id,
-                            "quote": _clean_text(content, 100) or "",
-                            "reason": "模型未覆盖，按原文补齐",
-                        }
-                    ],
-                    source="system",
-                    meta={"fill": True, "unit_index": start_index + len(units)},
+            speaker_name = None
+            if inner is not None:
+                unit_type = "dialogue"
+                speaker, _reason = self._infer_dialogue_speaker(
+                    gap_text,
+                    local_start,
+                    local_end,
+                    context_text,
+                    canonical,
+                    aliases,
                 )
+                if speaker is not None:
+                    speaker_name = speaker.canonical_name
+                text = " ".join(inner.split())
+                confidence = 0.85 if speaker is not None else 0.55
+            else:
+                unit_type = _candidate_type(content)
+                text = content
+                confidence = 0.55
+            draft = ScriptUnitDraft(
+                unit_type=unit_type,
+                source_text=content,
+                text=text,
+                display_text=content,
+                speaker_type=(
+                    "character"
+                    if inner is not None and speaker_name
+                    else "unknown"
+                    if inner is not None
+                    else "narrator"
+                ),
+                speaker_name=speaker_name,
+                confidence=confidence,
             )
+            plan = self._plan_unit(
+                draft,
+                chunk,
+                content,
+                chunk.abs_start + start + local_start,
+                chunk.abs_start + start + local_end,
+                chapter_id,
+                canonical,
+                aliases,
+                states_by_character,
+            )
+            if plan is not None:
+                plan.source = "system"
+                plan.meta = {
+                    **(plan.meta or {}),
+                    "fill": True,
+                    "unit_index": start_index + len(units),
+                }
+                units.append(plan)
+        self._inherit_performance(units)
         return units
 
     def _fallback_chunk(
-        self, chunk: _Chunk, chapter_id: str, *, start_index: int
+        self,
+        chunk: _Chunk,
+        chapter_id: str,
+        canonical: dict[str, list[Character]],
+        aliases: dict[str, list[Character]],
+        states_by_character: dict[str, dict[str, Any]],
+        *,
+        start_index: int,
     ) -> _ChunkOutcome:
         units = self._fill_gap(
             chunk,
             0,
             len(chunk.text),
             chapter_id,
+            canonical,
+            aliases,
+            states_by_character,
             start_index=start_index,
         )
         return _ChunkOutcome(
@@ -1567,9 +2427,9 @@ class ScriptService:
                 old.updated_at = utc_now()
             session.flush()
             needs_review = any(
-                review.severity in {"blocking", "warning"}
+                review.severity == "blocking"
                 for review in chapter_reviews
-            ) or any(plan.review_status == "needs_review" for plan in plans)
+            )
             version_row.is_active = True
             version_row.status = "needs_review" if needs_review else "draft"
             chapter.script_status = "needs_review" if needs_review else "completed"
@@ -1637,36 +2497,19 @@ class ScriptService:
             .limit(1)
         )
 
-    def _review_scope(
-        self, session: Session, chapter: Chapter
-    ) -> tuple[list[str], list[Any]]:
-        unit_ids = list(
-            session.scalars(
-                select(ScriptUnit.id).where(ScriptUnit.chapter_id == chapter.id)
-            )
-        )
-        conditions = [
-            and_(
-                ReviewItem.entity_type == "chapter",
-                ReviewItem.entity_id == chapter.id,
-            )
-        ]
-        if unit_ids:
-            conditions.append(
-                and_(
-                    ReviewItem.entity_type == "script_unit",
-                    ReviewItem.entity_id.in_(unit_ids),
-                )
-            )
-        return unit_ids, conditions
-
-    def _version_out(self, row: ScriptVersion, unit_count: int) -> ScriptVersionOut:
+    def _version_out(
+        self,
+        row: ScriptVersion,
+        unit_count: int,
+        *,
+        blocking: bool = False,
+    ) -> ScriptVersionOut:
         return ScriptVersionOut(
             id=row.id,
             book_id=row.book_id,
             chapter_id=row.chapter_id,
             version=row.version,
-            status=row.status,
+            status=effective_version_status(row.status, blocking=blocking),
             adaptation_level=row.adaptation_level,
             source_scene_version=row.source_scene_version,
             source_hash=row.source_hash,
@@ -1685,6 +2528,8 @@ class ScriptService:
         row: ScriptUnit,
         speaker_name: str | None,
         voice: tuple[VoiceCast | None, VoiceActor | None] | None = None,
+        *,
+        blocking: bool = False,
     ) -> ScriptUnitOut:
         actor = voice[1] if voice is not None else None
         return ScriptUnitOut(
@@ -1715,7 +2560,10 @@ class ScriptService:
             pause_before_ms=row.pause_before_ms,
             pause_after_ms=row.pause_after_ms,
             sfx=dict(row.sfx_json or {}),
-            review_status=row.review_status,
+            review_status=effective_unit_status(
+                row.review_status,
+                blocking=blocking,
+            ),
             confidence=row.confidence,
             audio_status=row.audio_status,
             current_audio_asset_id=row.current_audio_asset_id,
@@ -1802,6 +2650,7 @@ class ScriptService:
             )
         )
         if existing is None:
+            policy = policy_for(review.code)
             item = ReviewItem(
                 id=new_id("review"),
                 book_id=book_id,
@@ -1813,6 +2662,7 @@ class ScriptService:
                 message=review.message,
                 payload_json=review.payload,
                 status="open",
+                category=policy.category,
                 source="ai",
                 created_at=utc_now(),
                 updated_at=utc_now(),

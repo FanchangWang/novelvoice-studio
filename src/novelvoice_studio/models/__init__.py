@@ -10,6 +10,7 @@ from novelvoice_studio.models.review import ReviewItem
 from novelvoice_studio.models.scene import Scene, SceneCharacter
 from novelvoice_studio.models.script import ScriptUnit, ScriptVersion
 from novelvoice_studio.models.segment import AudioAsset, Segment
+from novelvoice_studio.models.system import BookIdSequence
 from novelvoice_studio.models.voice import VoiceProfile
 from novelvoice_studio.models.voice_actor import VoiceActor, VoiceCast
 
@@ -18,6 +19,7 @@ __all__ = [
     "Base",
     "Book",
     "BookBible",
+    "BookIdSequence",
     "Chapter",
     "Character",
     "CharacterArc",

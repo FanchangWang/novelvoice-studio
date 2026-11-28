@@ -44,7 +44,13 @@ def update_chapter(
     payload: ChapterUpdate,
     service: ChapterServiceDep,
 ) -> ChapterSummary:
-    return service.update_title(chapter_id, payload.title)
+    return service.update_title(
+        chapter_id,
+        title=payload.title,
+        chapter_kind=payload.chapter_kind,
+        analysis_included=payload.analysis_included,
+        classification_status=payload.classification_status,
+    )
 
 
 @router.post("/{chapter_id}/split", response_model=ChapterMutationResponse)

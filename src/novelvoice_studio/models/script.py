@@ -65,7 +65,7 @@ class ScriptVersion(Base):
     adaptation_level: Mapped[str] = mapped_column(
         String(16), default="light", nullable=False
     )
-    source_scene_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_scene_version: Mapped[int | None] = mapped_column(Integer)
     source_hash: Mapped[str | None] = mapped_column(String(64))
     prompt_version: Mapped[str | None] = mapped_column(String(64))
     model: Mapped[str | None] = mapped_column(String(255))

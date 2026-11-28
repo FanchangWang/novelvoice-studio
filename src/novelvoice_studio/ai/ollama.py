@@ -25,6 +25,7 @@ from novelvoice_studio.ai.base import (
     ChapterScriptResult,
     ChapterSummaryResult,
     CharacterAnalysisResult,
+    ImportStructureResult,
     LLMProvider,
     ProviderHealth,
     SegmentAnalysisResult,
@@ -34,6 +35,7 @@ from novelvoice_studio.ai.prompts import (
     BIBLE_MERGE_PROMPT_VERSION,
     BIBLE_TIMELINE_PROMPT_VERSION,
     CHARACTER_PROMPT_VERSION,
+    IMPORT_PROMPT_VERSION,
     SCENE_PROMPT_VERSION,
     SCRIPT_PROMPT_VERSION,
     SEGMENT_PROMPT_VERSION,
@@ -43,6 +45,7 @@ from novelvoice_studio.ai.prompts import (
     bible_merge_messages,
     bible_timeline_messages,
     character_messages,
+    import_structure_messages,
     repair_messages,
     scene_messages,
     script_messages,
@@ -308,6 +311,28 @@ class OllamaLLMProvider(LLMProvider):
                 )
                 call_meta = dict(call_meta)
                 call_meta["repair"] = repair_meta
+
+    # -------------------------------------------------------------- import
+
+    def inspect_import(
+        self,
+        front_matter: str,
+        candidates: list[dict[str, object]],
+        rule_headings: list[dict[str, object]],
+        *,
+        include_metadata: bool = True,
+    ) -> ImportStructureResult:
+        return self._structured(
+            import_structure_messages(
+                front_matter,
+                candidates,
+                rule_headings,
+                include_metadata=include_metadata,
+            ),
+            ImportStructureResult,
+            task="import_structure",
+            prompt_version=IMPORT_PROMPT_VERSION,
+        )
 
     # -------------------------------------------------------------- analysis
 

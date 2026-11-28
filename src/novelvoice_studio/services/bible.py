@@ -78,6 +78,7 @@ from novelvoice_studio.services.books import BookService
 from novelvoice_studio.services.character_ops import normalize_aliases
 from novelvoice_studio.services.chapters import ParagraphSlice, split_paragraphs
 from novelvoice_studio.services.paths import new_id, validate_id
+from novelvoice_studio.services.review_policy import policy_for
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +169,34 @@ _ALIAS_ROLE_WORDS = {
     "来人",
     "陌生人",
 }
+# 需要结合前后文才能确定指代对象的敬称。它们不能独立成角色，也不能成为
+# 全局别名；“宜妃娘娘”这类带具体封号的称谓仍可作为该角色的局部别名。
+_CONTEXTUAL_HONORIFICS = {
+    "娘娘",
+    "殿下",
+    "姨娘",
+    "皇上",
+    "皇帝",
+    "陛下",
+    "皇后",
+    "太后",
+    "王爷",
+    "王妃",
+    "公主",
+    "太子",
+    "妃子",
+    "贵人",
+    "小主",
+    "大人",
+    "公子",
+    "小姐",
+    "将军",
+    "师父",
+    "师尊",
+    "师娘",
+    "大哥",
+    "大姐",
+}
 
 
 def _iso_now() -> str:
@@ -182,6 +211,11 @@ def _clean_name(value: str, limit: int = 120) -> str:
     return " ".join(str(value or "").split())[:limit]
 
 
+def _is_contextual_honorific(value: str) -> bool:
+    """判断是否为脱离上下文就无法唯一指代的通用敬称。"""
+    return _clean_name(value) in _CONTEXTUAL_HONORIFICS
+
+
 def _alias_is_name(value: str) -> bool:
     """别称必须是可称呼的名字或绰号，不能是“某某的姐姐”这类描述短语。"""
     cleaned = _clean_name(value)
@@ -189,12 +223,45 @@ def _alias_is_name(value: str) -> bool:
         return False
     if "的" in cleaned:
         return False
-    if cleaned in _ALIAS_ROLE_WORDS:
+    if cleaned in _ALIAS_ROLE_WORDS or _is_contextual_honorific(cleaned):
         return False
+    # “宜妃娘娘”等具体封号+敬称仍可唯一指代人物；单独“娘娘”不行。
+    for suffix in _CONTEXTUAL_HONORIFICS:
+        if cleaned.endswith(suffix) and len(cleaned) > len(suffix):
+            prefix = cleaned[: -len(suffix)]
+            if prefix and not _is_contextual_honorific(prefix):
+                return len(cleaned) <= 8
     # 三字以内可能是“沈老板”“孙二娘”这类称呼；更长且含亲属/身份词按描述句处理。
     return len(cleaned) <= 3 or not any(
         word in cleaned for word in _ALIAS_ROLE_WORDS
     )
+
+
+def _specific_name_from_draft(draft: BibleCharacterDraft) -> str | None:
+    """把模型误建的“娘娘”角色恢复为上下文中的具体姓名；无法恢复则丢弃。"""
+    name = _clean_name(draft.name)
+    if not name:
+        return None
+    if not _is_contextual_honorific(name):
+        return name
+    candidates: list[tuple[int, float, str]] = []
+    for alias in draft.aliases:
+        alias_name = _clean_name(alias.name)
+        if not _alias_is_name(alias_name) or _is_contextual_honorific(alias_name):
+            continue
+        for suffix in sorted(_CONTEXTUAL_HONORIFICS, key=len, reverse=True):
+            if alias_name.endswith(suffix) and len(alias_name) > len(suffix):
+                base = alias_name[: -len(suffix)]
+                if base and not _is_contextual_honorific(base):
+                    candidates.append((len(base), _clamp(alias.confidence), base))
+                break
+        else:
+            candidates.append((len(alias_name), _clamp(alias.confidence), alias_name))
+    if not candidates:
+        return None
+    # 优先选择更具体且置信度更高的名字，同分时保持稳定。
+    candidates.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    return candidates[0][2]
 
 
 def _normalize_relationship_type(value: str | None) -> str:
@@ -336,8 +403,7 @@ def _overview_from_characters(
     return _clean_text(
         f"全书共 {total_chapters} 章，识别 {len(characters)} 个角色。"
         f"主要角色：{'；'.join(details)}。"
-        "本概览只依据结构化角色表生成，不补充原文没有的情节或亲属关系；"
-        "关系、人物阶段与剧情时间线详见设定集。",
+        "本概览只依据结构化角色表生成，不补充原文没有的情节或亲属关系。",
         600,
     ) or ""
 
@@ -505,7 +571,10 @@ class BibleService:
         return list(
             session.scalars(
                 select(Chapter)
-                .where(Chapter.book_id == book_id)
+                .where(
+                    Chapter.book_id == book_id,
+                    Chapter.analysis_included.is_(True),
+                )
                 .order_by(Chapter.sequence.asc())
             )
         )
@@ -585,11 +654,35 @@ class BibleService:
             for index, (start, end) in enumerate(spans)
         ]
 
+    def _extraction_window_text(
+        self, chapter: _ChapterSource, window: _Window
+    ) -> str:
+        """为抽取窗口附带有限上下文，避免跨窗口的称谓指代断裂。"""
+        if window.total <= 1:
+            return window.text
+        limit = max(200, self.window_chars)
+        overlap = max(200, min(800, limit // 3))
+        before_start = max(chapter.start, window.start - overlap)
+        after_end = min(chapter.end, window.end + overlap)
+        before = chapter.text[before_start - chapter.start : window.start - chapter.start]
+        after = chapter.text[window.end - chapter.start : after_end - chapter.start]
+        parts: list[str] = []
+        if before.strip():
+            parts.append(f"【前文，仅供消歧】\n{before}")
+        parts.append(f"【当前分析窗口 {window.index}/{window.total}】\n{window.text}")
+        if after.strip():
+            parts.append(f"【后文，仅供消歧】\n{after}")
+        return "\n".join(parts)
+
     def _active_characters(self, session: Session, book_id: str) -> list[Character]:
         return list(
             session.scalars(
                 select(Character)
-                .where(Character.book_id == book_id, Character.merged_into_id.is_(None))
+                .where(
+                    Character.book_id == book_id,
+                    Character.merged_into_id.is_(None),
+                    ~Character.canonical_name.in_(sorted(_CONTEXTUAL_HONORIFICS)),
+                )
                 .order_by(Character.created_at.asc())
             )
         )
@@ -603,7 +696,11 @@ class BibleService:
     ) -> list[dict[str, Any]]:
         rows: dict[str, dict[str, Any]] = {}
         for character in characters:
-            aliases = [item["name"] for item in normalize_aliases(character.aliases_json)]
+            aliases = [
+                item["name"]
+                for item in normalize_aliases(character.aliases_json)
+                if _alias_is_name(item["name"])
+            ]
             rows.setdefault(
                 _norm(character.canonical_name),
                 {
@@ -775,7 +872,7 @@ class BibleService:
         relationships: dict[tuple[str, str], RelationshipDraft] = {}
         for result in results:
             for draft in result.characters:
-                name = _clean_name(draft.name)
+                name = _specific_name_from_draft(draft)
                 if not name:
                     continue
                 draft.name = name
@@ -1147,6 +1244,36 @@ class BibleService:
         ]
         return selected or list(cluster.observations)
 
+    @staticmethod
+    def _canonical_age(cluster: _Cluster) -> str:
+        """连续叙事中的角色基准年龄；少数章节的年龄漂移不覆盖主要判断。"""
+        votes = Counter(
+            item.draft.age_range
+            for item in cluster.observations
+            if item.draft.age_range in _AGE_STAGE_LABELS
+        )
+        return votes.most_common(1)[0][0] if votes else "unknown"
+
+    @staticmethod
+    def _confirmed_age_stage(
+        observations: list[_CharacterObservation],
+        arc: BibleArcDraft | None,
+    ) -> bool:
+        """只接受能被候选证据原句证实的真实年龄阶段，拒绝剧情阶段造成的年龄漂移。"""
+        if arc is None or not arc.age_stage_explicit or arc.age_stage == "unknown":
+            return False
+        evidence_quotes = {
+            _norm(item.quote)
+            for observation in observations
+            for item in observation.draft.evidence
+            if _norm(item.quote)
+        }
+        return any(
+            len(_norm(quote)) >= 6
+            and any(_norm(quote) in quote_index for quote_index in evidence_quotes)
+            for quote in arc.age_stage_evidence
+        )
+
     def _arc_payload(
         self,
         cluster: _Cluster,
@@ -1158,11 +1285,18 @@ class BibleService:
         sequences = sorted({item.chapter_sequence for item in observations})
         start = arc.chapter_start if arc is not None else (sequences[0] if sequences else None)
         end = arc.chapter_end if arc is not None else (sequences[-1] if sequences else None)
-        stage = arc.age_stage if arc is not None and arc.age_stage != "unknown" else "unknown"
-        if stage == "unknown":
-            stages = [item.draft.age_range for item in observations if item.draft.age_range != "unknown"]
-            if stages:
-                stage = Counter(stages).most_common(1)[0][0]
+        canonical_age = self._canonical_age(cluster)
+        explicit_stage = self._confirmed_age_stage(observations, arc)
+        non_present_stage = arc is None and any(
+            item.timeline.time_mode in {"flashback", "flashforward", "dream"}
+            for item in observations
+        )
+        if explicit_stage or non_present_stage:
+            stage = arc.age_stage if arc is not None else observations[0].draft.age_range
+            age_stage_basis = "evidence" if explicit_stage else "non_present"
+        else:
+            stage = canonical_age
+            age_stage_basis = "canonical"
         labels = [
             item.timeline.story_time_label
             for item in observations
@@ -1249,6 +1383,11 @@ class BibleService:
             "voice_traits_json": {
                 **({"description": voice} if voice else {}),
                 "age_stage": stage,
+                "age_stage_explicit": explicit_stage,
+                "age_stage_basis": age_stage_basis,
+                "age_stage_evidence": (
+                    list(arc.age_stage_evidence) if arc is not None and explicit_stage else []
+                ),
             },
             "confidence": confidence,
             "evidence_json": evidence,
@@ -1287,7 +1426,12 @@ class BibleService:
         grouped: dict[str, list[_CharacterObservation]] = defaultdict(list)
         for observation in cluster.observations:
             stage = observation.draft.age_range
-            if stage not in _AGE_STAGE_LABELS:
+            if (
+                stage not in _AGE_STAGE_LABELS
+                or observation.timeline.time_mode not in
+                {"flashback", "flashforward", "dream"}
+            ):
+                # 没有原文证据时，present/unknown 的年龄漂移统一回到角色基准年龄。
                 stage = "unknown"
             grouped[stage].append(observation)
         arcs = [
@@ -1327,6 +1471,7 @@ class BibleService:
             )
         )
         if existing is None:
+            policy = policy_for(code)
             item = ReviewItem(
                 id=new_id("review"),
                 book_id=book_id,
@@ -1338,6 +1483,7 @@ class BibleService:
                 message=message,
                 payload_json=payload_json,
                 status="open",
+                category=policy.category,
                 source="ai",
                 created_at=utc_now(),
                 updated_at=utc_now(),
@@ -1518,10 +1664,18 @@ class BibleService:
                     cluster.observations[0].chapter_id if cluster.observations else None,
                     limit=40,
                 )
-                existing_aliases = normalize_aliases(character.aliases_json)
+                existing_aliases = [
+                    alias
+                    for alias in normalize_aliases(character.aliases_json)
+                    if _alias_is_name(alias["name"])
+                ]
                 seen_aliases = {_norm(item["name"]) for item in existing_aliases}
                 seen_aliases.add(_norm(character.canonical_name))
-                candidates = normalize_aliases(character.alias_candidates_json)
+                candidates = [
+                    candidate
+                    for candidate in normalize_aliases(character.alias_candidates_json)
+                    if _alias_is_name(candidate["name"])
+                ]
                 candidate_by_key = {_norm(item["name"]): item for item in candidates}
                 for alias_key, alias in cluster.aliases.items():
                     name = _clean_name(alias.get("name"))
@@ -2165,7 +2319,7 @@ class BibleService:
         extraction_calls: list[dict[str, Any]] = []
         for window in windows:
             result = self.registry.llm.extract_bible_characters(
-                window.text,
+                self._extraction_window_text(chapter_source, window),
                 known,
                 {
                     "book_title": book_title,
@@ -2881,16 +3035,18 @@ class BibleService:
             entity_conditions = [ReviewItem.entity_id == bible.id]
             if scope_ids:
                 entity_conditions.append(ReviewItem.entity_id.in_(scope_ids))
-            blocking = int(
-                session.scalar(
-                    select(func.count(ReviewItem.id)).where(
+            blocking = sum(
+                1
+                for item in session.scalars(
+                    select(ReviewItem).where(
                         ReviewItem.book_id == book.id,
+                        ReviewItem.category == "content",
                         ReviewItem.status == "open",
                         ReviewItem.severity.in_(("blocking", "warning")),
                         or_(*entity_conditions),
                     )
                 )
-                or 0
+                if policy_for(item.code, category=item.category).actionable
             )
             final_status = "needs_review" if (blocking or failed) else "approved"
             content = dict(bible.content_json or {})
@@ -3084,17 +3240,20 @@ class BibleService:
                     (ReviewItem.entity_type == "character")
                     & ReviewItem.entity_id.in_(character_ids)
                 )
-            review_items = list(
-                session.scalars(
+            review_items = [
+                item
+                for item in session.scalars(
                     select(ReviewItem)
                     .where(
                         ReviewItem.book_id == bible.book_id,
+                        ReviewItem.category == "content",
                         ReviewItem.status == "open",
                         or_(*review_scope),
                     )
                     .order_by(ReviewItem.severity, ReviewItem.created_at.desc())
                 )
-            )
+                if policy_for(item.code, category=item.category).actionable
+            ]
             relationships = list(
                 session.scalars(
                     select(CharacterRelationship)
@@ -3233,14 +3392,16 @@ class BibleService:
             book = self._book(session, book_id)
             active = self._active_bible(session, book.id)
             job = self._latest_job(session, book.id)
-            open_reviews = int(
-                session.scalar(
-                    select(func.count(ReviewItem.id)).where(
+            open_reviews = sum(
+                1
+                for item in session.scalars(
+                    select(ReviewItem).where(
                         ReviewItem.book_id == book.id,
+                        ReviewItem.category == "content",
                         ReviewItem.status == "open",
                     )
                 )
-                or 0
+                if policy_for(item.code, category=item.category).actionable
             )
             return BibleStatusResponse(
                 book_id=book.id,
@@ -3256,14 +3417,16 @@ class BibleService:
             book = self._book(session, book_id)
             active = self._active_bible(session, book.id)
             job = self._latest_job(session, book.id)
-            open_reviews = int(
-                session.scalar(
-                    select(func.count(ReviewItem.id)).where(
+            open_reviews = sum(
+                1
+                for item in session.scalars(
+                    select(ReviewItem).where(
                         ReviewItem.book_id == book.id,
+                        ReviewItem.category == "content",
                         ReviewItem.status == "open",
                     )
                 )
-                or 0
+                if policy_for(item.code, category=item.category).actionable
             )
             return BibleStateResponse(
                 book_id=book.id,

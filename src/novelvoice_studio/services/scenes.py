@@ -64,6 +64,13 @@ from novelvoice_studio.services.analysis_serializers import to_job_out
 from novelvoice_studio.services.books import BookService
 from novelvoice_studio.services.chapters import ParagraphSlice, split_paragraphs
 from novelvoice_studio.services.paths import new_id, validate_id
+from novelvoice_studio.services.production_status import (
+    effective_entity_status,
+    effective_stage_status,
+    has_open_blocking,
+    stage_review_scope,
+)
+from novelvoice_studio.services.review_policy import policy_for
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +195,9 @@ class _ArcInfo:
     story_time_start: str | None
     story_time_end: str | None
     voice_hint: str | None
+    source: str
+    age_stage_explicit: bool
+    age_stage_basis: str
 
 
 @dataclass(frozen=True)
@@ -236,11 +246,10 @@ class _ScenePlan:
 
     @property
     def status(self) -> str:
-        if self.fallback:
-            return "needs_review"
+        # 普通回退、低置信和缺失角色状态已自动采用；只有明确阻断冲突才需人工。
         return (
             "needs_review"
-            if any(item.severity in {"blocking", "warning"} for item in self.reviews)
+            if any(item.severity == "blocking" for item in self.reviews)
             else "completed"
         )
 
@@ -344,6 +353,11 @@ class SceneService:
         chapter = session.get(Chapter, chapter_id)
         if chapter is None:
             raise NotFoundError("章节不存在")
+        if not chapter.analysis_included:
+            raise ValidationError(
+                "该章节当前未纳入分析；如确需生成分场，请先在章节设置中开启。",
+                code="chapter_excluded",
+            )
         return chapter, self._book(session, chapter.book_id)
 
     def _active_bible(self, session: Session, book_id: str) -> BookBible | None:
@@ -500,6 +514,7 @@ class SceneService:
                 or (arc.voice_traits_json or {}).get("description"),
                 255,
             )
+            voice_traits = arc.voice_traits_json or {}
             arcs_by_character.setdefault(arc.character_id, []).append(
                 _ArcInfo(
                     label=arc.label,
@@ -511,6 +526,9 @@ class SceneService:
                     story_time_start=arc.story_time_start,
                     story_time_end=arc.story_time_end,
                     voice_hint=voice_hint,
+                    source=arc.source,
+                    age_stage_explicit=bool(voice_traits.get("age_stage_explicit")),
+                    age_stage_basis=str(voice_traits.get("age_stage_basis") or ""),
                 )
             )
         infos: list[_CharacterInfo] = []
@@ -783,22 +801,29 @@ class SceneService:
             chapter, book = self._chapter(session, chapter_id)
             job = self._latest_job(session, chapter.id)
             active = job is not None and job.status in ACTIVE_JOB_STATUSES
-            scene_ids, conditions = self._review_scope(session, chapter)
-            open_reviews = int(
-                session.scalar(
-                    select(func.count(ReviewItem.id)).where(
+            _, conditions = stage_review_scope(session, chapter, "scene")
+            open_reviews = sum(
+                1
+                for item in session.scalars(
+                    select(ReviewItem).where(
                         ReviewItem.book_id == book.id,
+                        ReviewItem.category == "content",
                         ReviewItem.status == "open",
                         ReviewItem.code.startswith("scene_"),
                         or_(*conditions),
                     )
                 )
-                or 0
+                if policy_for(item.code, category=item.category).actionable
             )
+            blocking = has_open_blocking(session, book.id, "scene", conditions)
             return SceneStatusResponse(
                 chapter_id=chapter.id,
                 book_id=book.id,
-                scene_status="running" if active else chapter.scene_status,
+                scene_status=effective_stage_status(
+                    chapter.scene_status,
+                    active=active,
+                    blocking=blocking,
+                ),
                 scene_version=chapter.scene_version,
                 open_reviews=open_reviews,
                 job=to_job_out(job) if job else None,
@@ -845,32 +870,48 @@ class SceneService:
             states_by_scene: dict[str, list[SceneCharacter]] = {}
             for row in states:
                 states_by_scene.setdefault(row.scene_id, []).append(row)
-            items = [
-                self._serialize_scene(
-                    row,
-                    states_by_scene.get(row.id, []),
-                    names.get(row.pov_character_id) if row.pov_character_id else None,
-                    names,
-                )
-                for row in scene_rows
-            ]
-            all_scene_ids, conditions = self._review_scope(session, chapter)
-            reviews = list(
-                session.scalars(
+            _, conditions = stage_review_scope(session, chapter, "scene")
+            reviews = [
+                item
+                for item in session.scalars(
                     select(ReviewItem)
                     .where(
                         ReviewItem.book_id == book.id,
+                        ReviewItem.category == "content",
                         ReviewItem.status == "open",
                         ReviewItem.code.startswith("scene_"),
                         or_(*conditions),
                     )
                     .order_by(ReviewItem.created_at.asc(), ReviewItem.id.asc())
                 )
-            )
+                if policy_for(item.code, category=item.category).actionable
+            ]
+            blocking_scene_ids = {
+                item.entity_id
+                for item in reviews
+                if item.severity == "blocking"
+                and item.entity_type == "scene"
+                and item.entity_id
+            }
+            items = [
+                self._serialize_scene(
+                    row,
+                    states_by_scene.get(row.id, []),
+                    names.get(row.pov_character_id) if row.pov_character_id else None,
+                    names,
+                    blocking=row.id in blocking_scene_ids,
+                )
+                for row in scene_rows
+            ]
+            blocking = any(item.severity == "blocking" for item in reviews)
             return SceneStateResponse(
                 chapter_id=chapter.id,
                 book_id=book.id,
-                scene_status="running" if active else chapter.scene_status,
+                scene_status=effective_stage_status(
+                    chapter.scene_status,
+                    active=active,
+                    blocking=blocking,
+                ),
                 scene_version=chapter.scene_version,
                 open_reviews=len(reviews),
                 job=to_job_out(job) if job else None,
@@ -878,33 +919,14 @@ class SceneService:
                 review_items=[self._review_out(item) for item in reviews],
             )
 
-    def _review_scope(
-        self, session: Session, chapter: Chapter
-    ) -> tuple[list[str], list[Any]]:
-        scene_ids = list(
-            session.scalars(select(Scene.id).where(Scene.chapter_id == chapter.id))
-        )
-        conditions = [
-            and_(
-                ReviewItem.entity_type == "chapter",
-                ReviewItem.entity_id == chapter.id,
-            )
-        ]
-        if scene_ids:
-            conditions.append(
-                and_(
-                    ReviewItem.entity_type == "scene",
-                    ReviewItem.entity_id.in_(scene_ids),
-                )
-            )
-        return scene_ids, conditions
-
     def _serialize_scene(
         self,
         row: Scene,
         states: list[SceneCharacter],
         pov_name: str | None,
         names: dict[str, str],
+        *,
+        blocking: bool = False,
     ) -> SceneOut:
         return SceneOut(
             id=row.id,
@@ -923,7 +945,10 @@ class SceneService:
             mood=row.mood,
             source_start_offset=row.source_start_offset,
             source_end_offset=row.source_end_offset,
-            analysis_status=row.analysis_status,
+            analysis_status=effective_entity_status(
+                row.analysis_status,
+                blocking=blocking,
+            ),
             confidence=row.confidence,
             evidence=list(row.evidence_json or []),
             meta=dict(row.meta_json or {}),
@@ -1014,7 +1039,10 @@ class SceneService:
                 all_chapters = list(
                     session.scalars(
                         select(Chapter)
-                        .where(Chapter.book_id == book.id)
+                        .where(
+                            Chapter.book_id == book.id,
+                            Chapter.analysis_included.is_(True),
+                        )
                         .order_by(Chapter.sequence.asc())
                     )
                 )
@@ -1058,8 +1086,9 @@ class SceneService:
             calls: list[dict[str, Any]] = []
             notes: list[str] = []
             fallback_windows: list[dict[str, Any]] = []
+            repaired_windows: list[dict[str, Any]] = []
             valid_windows = 0
-            last_error: Exception | None = None
+            failure_reasons: list[str] = []
 
             for window in windows:
                 with session_scope(self.session_factory) as session:
@@ -1081,21 +1110,50 @@ class SceneService:
                 }
                 result: ChapterSceneResult | None = None
                 failure_reason: str | None = None
-                try:
-                    result = self.registry.llm.analyze_chapter_scenes(
-                        prompt_paragraphs, known, context
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    last_error = exc
-                    failure_reason = (
-                        f"{type(exc).__name__}: "
-                        f"{_clean_text(getattr(exc, 'message', str(exc)), 300)}"
-                    )
+                for attempt in range(2):
+                    try:
+                        result = self.registry.llm.analyze_chapter_scenes(
+                            prompt_paragraphs, known, context
+                        )
+                        failure_reason = None
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        result = None
+                        failure_reason = (
+                            f"{type(exc).__name__}: "
+                            f"{_clean_text(getattr(exc, 'message', str(exc)), 300)}"
+                        )
+                        if attempt == 0:
+                            logger.warning("分场窗口 %s 首次调用失败，自动重试：%s", window.index, failure_reason)
+                            time.sleep(0.25)
                 if result is not None:
                     coverage_error = self._coverage_error(result, window)
                     if coverage_error:
+                        shifted = self._repair_shifted_ranges(result, window)
+                        if shifted is not None:
+                            result, repair_detail = shifted
+                            repair_detail.update(
+                                {
+                                    "reason": coverage_error,
+                                    "action": "模型范围整体偏移一段，已按窗口片段索引归一化",
+                                }
+                            )
+                            repaired_windows.append(repair_detail)
+                            coverage_error = None
+                    if coverage_error:
                         failure_reason = coverage_error
-                    else:
+                        repaired = self._repair_missing_tail(result, window)
+                        if repaired is not None:
+                            result, repair_detail = repaired
+                            repair_detail.update(
+                                {
+                                    "reason": coverage_error,
+                                    "action": "保留模型已覆盖场景，确定性补齐原文尾部",
+                                }
+                            )
+                            repaired_windows.append(repair_detail)
+                            failure_reason = None
+                    if failure_reason is None:
                         valid_windows += 1
                         calls.append(
                             {
@@ -1123,14 +1181,22 @@ class SceneService:
                             if note
                         )
                 if failure_reason is not None:
+                    failure_reasons.append(failure_reason)
                     logger.warning(
                         "分场窗口 %s/%s 回退：%s",
                         window.index,
                         window.total,
                         failure_reason,
                     )
+                    diagnostic: dict[str, Any] = {}
+                    if result is not None:
+                        diagnostic = self._coverage_diagnostic(result, window)
                     fallback_windows.append(
-                        {"window": window.index, "reason": failure_reason[:300]}
+                        {
+                            "window": window.index,
+                            "reason": failure_reason[:300],
+                            **diagnostic,
+                        }
                     )
                     plans.append(
                         self._fallback_plan(
@@ -1155,16 +1221,29 @@ class SceneService:
                         "last_window": window.index,
                         "scenes": len(plans),
                         "fallback_windows": len(fallback_windows),
+                        "repaired_windows": len(repaired_windows),
                     }
 
             if valid_windows == 0:
-                reason = str(last_error) if last_error is not None else "模型未返回可用的分场结果"
+                reason = failure_reasons[-1] if failure_reasons else "模型未返回可用的分场结果"
                 raise AppError(
                     f"分场模型未返回可用结果：{_clean_text(reason, 300)}",
                     status_code=502,
                     code="scene_llm_failed",
                 )
 
+            if repaired_windows:
+                chapter_reviews.append(
+                    _ReviewDraft(
+                        entity_type="chapter",
+                        entity_id=chapter_source.id,
+                        code="scene_llm_tail_repaired",
+                        severity="info",
+                        title="模型漏掉的场景尾部已自动补齐",
+                        message="已保留模型覆盖部分，并按原文顺序补齐未覆盖片段，不阻断后续剧本生成。",
+                        payload={"windows": repaired_windows},
+                    )
+                )
             if fallback_windows:
                 chapter_reviews.append(
                     _ReviewDraft(
@@ -1215,6 +1294,7 @@ class SceneService:
                 plans,
                 chapter_reviews,
                 fallback_windows,
+                repaired_windows,
                 calls,
                 started,
                 started_perf,
@@ -1253,26 +1333,162 @@ class SceneService:
             result.scenes,
             key=lambda item: (item.paragraph_start, item.paragraph_end),
         )
+        ranges = [
+            f"{scene.paragraph_start}-{scene.paragraph_end}" for scene in scenes
+        ]
         cursor = 0
         for scene in scenes:
+            if cursor >= len(expected):
+                return "模型返回的场景范围超过窗口片段总数"
             if scene.paragraph_start not in allowed or scene.paragraph_end not in allowed:
                 return (
                     f"场景范围 {scene.paragraph_start}-{scene.paragraph_end} "
-                    f"超出窗口片段范围 {expected[0]}-{expected[-1]}"
+                    f"超出窗口片段范围 {expected[0]}-{expected[-1]}；"
+                    f"模型实际范围 {', '.join(ranges)}"
                 )
             if scene.paragraph_start != expected[cursor]:
                 return (
                     f"场景范围不连续：期望从片段 {expected[cursor]} 开始，"
-                    f"实际为 {scene.paragraph_start}"
+                    f"实际为 {scene.paragraph_start}；模型实际范围 {', '.join(ranges)}"
                 )
             try:
                 end_position = expected.index(scene.paragraph_end, cursor)
             except ValueError:
-                return f"场景结束片段 {scene.paragraph_end} 顺序无效"
+                return (
+                    f"场景结束片段 {scene.paragraph_end} 顺序无效；"
+                    f"模型实际范围 {', '.join(ranges)}"
+                )
             cursor = end_position + 1
         if cursor != len(expected):
-            return "场景未覆盖窗口内全部片段"
+            return (
+                f"场景未覆盖窗口尾部片段 {expected[cursor]}-{expected[-1]}；"
+                f"模型实际范围 {', '.join(ranges)}"
+            )
         return None
+
+    def _coverage_diagnostic(
+        self, result: ChapterSceneResult, window: _Window
+    ) -> dict[str, Any]:
+        """只保存覆盖诊断与有界输出摘录，不读取任何外部文件。"""
+        expected = [unit.index for unit in window.units]
+        scenes = sorted(
+            result.scenes,
+            key=lambda item: (item.paragraph_start, item.paragraph_end),
+        )
+        covered = 0
+        for scene in scenes:
+            if covered >= len(expected):
+                break
+            if (
+                scene.paragraph_start != expected[covered]
+                or scene.paragraph_end not in expected
+            ):
+                break
+            end_position = expected.index(scene.paragraph_end, covered)
+            covered = end_position + 1
+        missing = expected[covered:]
+        raw_output = _clean_text(
+            json.dumps(result.model_dump(mode="json"), ensure_ascii=False), 2000
+        )
+        return {
+            "expected_range": [expected[0], expected[-1]],
+            "model_ranges": [
+                [scene.paragraph_start, scene.paragraph_end] for scene in scenes
+            ],
+            "covered_through": expected[covered - 1] if covered else None,
+            "missing_ranges": [missing[0], missing[-1]] if missing else [],
+            "window_excerpt": _clean_text(window.text, 1200),
+            "raw_output_excerpt": raw_output,
+        }
+
+    def _repair_shifted_ranges(
+        self, result: ChapterSceneResult, window: _Window
+    ) -> tuple[ChapterSceneResult, dict[str, Any]] | None:
+        """修复模型把 1-based 段落号当成 0-based（或反向）的整体偏移。"""
+        expected = [unit.index for unit in window.units]
+        scenes = sorted(
+            result.scenes,
+            key=lambda item: (item.paragraph_start, item.paragraph_end),
+        )
+        for delta in (-1, 1):
+            shifted = [
+                scene.model_copy(update={
+                    "paragraph_start": scene.paragraph_start + delta,
+                    "paragraph_end": scene.paragraph_end + delta,
+                })
+                for scene in scenes
+            ]
+            candidate = result.model_copy(update={"scenes": shifted})
+            if self._coverage_error(candidate, window) is None:
+                return candidate, {
+                    "window": window.index,
+                    "index_shift": delta,
+                    "missing_range": [],
+                    "missing_source_offsets": [],
+                    "missing_excerpt": "",
+                    **self._coverage_diagnostic(result, window),
+                }
+        return None
+
+    def _repair_missing_tail(
+        self, result: ChapterSceneResult, window: _Window
+    ) -> tuple[ChapterSceneResult, dict[str, Any]] | None:
+        """仅修复连续前缀之后的漏尾；范围错误或中间断层仍整窗回退。"""
+        if not result.scenes:
+            return None
+        expected = [unit.index for unit in window.units]
+        scenes = sorted(
+            result.scenes,
+            key=lambda item: (item.paragraph_start, item.paragraph_end),
+        )
+        cursor = 0
+        for scene in scenes:
+            if cursor >= len(expected):
+                return None
+            if scene.paragraph_start != expected[cursor] or scene.paragraph_end not in expected:
+                return None
+            try:
+                cursor = expected.index(scene.paragraph_end, cursor) + 1
+            except ValueError:
+                return None
+        if cursor == len(expected):
+            return None
+        missing_units = window.units[cursor:]
+        missing_start = missing_units[0]
+        missing_end = missing_units[-1]
+        missing_text = "\n".join(unit.text for unit in missing_units)
+        repair_detail = {
+            "window": window.index,
+            "missing_range": [missing_start.index, missing_end.index],
+            "missing_source_offsets": [missing_start.start, missing_end.end],
+            "missing_excerpt": _clean_text(missing_text, 1200),
+            **self._coverage_diagnostic(result, window),
+        }
+        tail = SceneDraft(
+            paragraph_start=missing_start.index,
+            paragraph_end=missing_end.index,
+            title="原文尾部（自动补全）",
+            summary="模型未覆盖此段，已按原文顺序补齐，等待剧本阶段继续分析。",
+            confidence=0.2,
+            evidence=[
+                EvidenceDraft(
+                    quote=_clean_text(missing_text, 500) or missing_text[:500],
+                    reason="模型漏尾后由系统按原文范围补齐",
+                )
+            ],
+        )
+        repaired = ChapterSceneResult(
+            scenes=[*result.scenes, tail],
+            notes=list(result.notes),
+            meta={
+                **dict(result.meta or {}),
+                "coverage_repair": {
+                    "missing_range": [missing_start.index, missing_end.index],
+                    "reason": "model_missing_tail",
+                },
+            },
+        )
+        return repaired, repair_detail
 
     def _plan_window(
         self,
@@ -1294,6 +1510,11 @@ class SceneService:
         ):
             start_unit = units_by_index[draft.paragraph_start]
             end_unit = units_by_index[draft.paragraph_end]
+            coverage_repair = (result.meta or {}).get("coverage_repair") or {}
+            repaired_tail = coverage_repair.get("missing_range") == [
+                draft.paragraph_start,
+                draft.paragraph_end,
+            ]
             time_mode = draft.time_mode
             if time_mode == "unknown":
                 time_mode = str(chapter_time.get("time_mode") or "unknown")
@@ -1348,9 +1569,14 @@ class SceneService:
                 arc = self._arc_for_chapter(info, chapter, story_order, sequences)
                 conflict: dict[str, str] | None = None
                 if time_mode == "present":
+                    arc_stage_confirmed = arc is not None and (
+                        arc.source == "user"
+                        or arc.age_stage_explicit
+                        or arc.age_stage_basis in {"evidence", "non_present"}
+                    )
                     target_stage = (
                         arc.age_stage
-                        if arc is not None and arc.age_stage != "unknown"
+                        if arc_stage_confirmed and arc.age_stage != "unknown"
                         else info.age_range
                     )
                     if target_stage != "unknown":
@@ -1437,7 +1663,7 @@ class SceneService:
                 for item in resolved_states
                 if item.state.confidence < self.confidence_threshold
             ]
-            if (
+            if not repaired_tail and (
                 draft.confidence < self.confidence_threshold
                 or low_states
             ):
@@ -1497,14 +1723,15 @@ class SceneService:
                     pov_character_id=pov_id,
                     story_order=story_order,
                     reviews=reviews,
-                    source="ai",
+                    source="system" if repaired_tail else "ai",
                     meta={
                         "prompt_version": SCENE_PROMPT_VERSION,
                         "provider": self.registry.llm.name,
                         "model": self.registry.llm.model,
                         "is_mock": self.registry.llm.is_mock,
                         "window": {"index": window.index, "total": window.total},
-                        "fallback": False,
+                        "fallback": repaired_tail,
+                        "coverage_repair": dict(coverage_repair) if repaired_tail else None,
                         "call": dict(result.meta or {}),
                         "evidence": evidence,
                     },
@@ -1605,6 +1832,7 @@ class SceneService:
         plans: list[_ScenePlan],
         chapter_reviews: list[_ReviewDraft],
         fallback_windows: list[dict[str, Any]],
+        repaired_windows: list[dict[str, Any]],
         calls: list[dict[str, Any]],
         started: str,
         started_perf: float,
@@ -1764,7 +1992,7 @@ class SceneService:
                     review_count += 1
 
             needs_review = any(plan.status == "needs_review" for plan in plans) or any(
-                review.severity in {"blocking", "warning"} for review in chapter_reviews
+                review.severity == "blocking" for review in chapter_reviews
             )
             chapter_row.scene_version = version
             chapter_row.scene_status = "needs_review" if needs_review else "completed"
@@ -1781,6 +2009,8 @@ class SceneService:
                 "scenes": len(plans),
                 "character_states": sum(len(plan.states) for plan in plans),
                 "fallback_windows": len(fallback_windows),
+                "repaired_windows": len(repaired_windows),
+                "coverage_diagnostics": repaired_windows + fallback_windows,
                 "review_items": review_count,
                 "warnings": [
                     review.message
@@ -1814,6 +2044,7 @@ class SceneService:
             )
         )
         if existing is None:
+            policy = policy_for(review.code)
             item = ReviewItem(
                 id=new_id("review"),
                 book_id=book_id,
@@ -1825,6 +2056,7 @@ class SceneService:
                 message=review.message,
                 payload_json=review.payload,
                 status="open",
+                category=policy.category,
                 source="ai",
                 created_at=utc_now(),
                 updated_at=utc_now(),

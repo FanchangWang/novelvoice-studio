@@ -12,8 +12,8 @@ import {
   useMessage,
 } from 'naive-ui'
 
-import type { ReviewItemOut } from '@/api/types'
-import { useReviewStore } from '@/stores/reviews'
+import type { ProductionChapterOut, ReviewItemOut } from '@/api/types'
+import { useReviewStore, type ReviewQuery } from '@/stores/reviews'
 import { errorMessage } from '@/utils/errors'
 import { formatDateTime } from '@/utils/format'
 import {
@@ -29,19 +29,23 @@ import {
 const props = withDefaults(
   defineProps<{
     bookId?: string | null
+    chapters?: ProductionChapterOut[]
     heading?: string
     hint?: string
   }>(),
   {
     bookId: null,
+    chapters: () => [],
     heading: '异常收件箱',
     hint: '只处理需要你判断的节点；接受会保留当前结果并关闭该项。',
   },
 )
 
+const chapterFilter = defineModel<string | null>('chapterFilter', { default: null })
 const emit = defineEmits<{
   (event: 'changed'): void
   (event: 'open-book', bookId: string): void
+  (event: 'open-location', item: ReviewItemOut): void
 }>()
 
 const reviews = useReviewStore()
@@ -52,18 +56,27 @@ const showIgnore = ref(false)
 const ignoreNote = ref('')
 const pendingIds = ref<string[]>([])
 const actionLoading = ref(false)
+const chapterOptions = computed(() =>
+  props.chapters.map((chapter) => ({
+    value: chapter.id,
+    label: `${chapter.volume_title || '默认卷'} · ${chapter.title}`,
+  })),
+)
 
 const openItems = computed(() =>
   reviews.items.filter((item) => item.status === 'open'),
 )
+const actionableOpenItems = computed(() =>
+  openItems.value.filter((item) => item.category === 'content' && item.actionable),
+)
 const allSelected = computed(
   () =>
-    openItems.value.length > 0 &&
-    openItems.value.every((item) => selectedIds.value.includes(item.id)),
+    actionableOpenItems.value.length > 0 &&
+    actionableOpenItems.value.every((item) => selectedIds.value.includes(item.id)),
 )
 const selectedOpenIds = computed(() =>
   selectedIds.value.filter((id) =>
-    openItems.value.some((item) => item.id === id),
+    actionableOpenItems.value.some((item) => item.id === id),
   ),
 )
 
@@ -73,10 +86,13 @@ function pruneSelection(): void {
 }
 
 function toggleAll(value: boolean): void {
-  selectedIds.value = value ? openItems.value.map((item) => item.id) : []
+  selectedIds.value = value ? actionableOpenItems.value.map((item) => item.id) : []
 }
 
 function toggleOne(item: ReviewItemOut, value: boolean): void {
+  if (item.category !== 'content' || !item.actionable) {
+    return
+  }
   const set = new Set(selectedIds.value)
   if (value) {
     set.add(item.id)
@@ -86,9 +102,14 @@ function toggleOne(item: ReviewItemOut, value: boolean): void {
   selectedIds.value = [...set]
 }
 
-async function refresh(overrides = {}): Promise<void> {
+async function refresh(overrides: ReviewQuery = {}): Promise<void> {
   try {
-    await reviews.load({ bookId: props.bookId, offset: 0, ...overrides })
+    await reviews.load({
+      bookId: props.bookId,
+      chapterId: chapterFilter.value,
+      offset: 0,
+      ...overrides,
+    })
     pruneSelection()
   } catch (err) {
     message.error(errorMessage(err))
@@ -155,10 +176,35 @@ async function confirmIgnore(): Promise<void> {
   }
 }
 
+function actionLabel(item: ReviewItemOut): string {
+  if (item.action_type === 'script_unit') return '打开剧本问题行'
+  if (item.action_type === 'character') return '查看角色与原文'
+  if (item.action_type === 'chapter_classification') return '查看章节并分类'
+  if (item.action_type === 'chapter_retry') return '查看原文并重试'
+  return '查看原文证据'
+}
+
+function locationLabel(item: ReviewItemOut): string {
+  const unit = item.location.unit_index
+  const scene = item.location.scene_index
+  if (typeof unit === 'number') return `剧本第 ${unit + 1} 行`
+  if (typeof scene === 'number') return `场景 ${scene + 1}`
+  if (item.location.character_name) return `角色：${item.location.character_name}`
+  return item.chapter_title ? `章节：${item.chapter_title}` : ''
+}
+
 async function loadMore(): Promise<void> {
   const next = Math.min(250, (reviews.query.limit ?? 100) + 100)
   await refresh({ limit: next })
 }
+
+watch(
+  () => chapterFilter.value,
+  () => {
+    selectedIds.value = []
+    void refresh()
+  },
+)
 
 watch(
   () => props.bookId,
@@ -188,12 +234,8 @@ onMounted(() => {
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <div class="rounded-lg border border-ink-700 bg-ink-900/60 px-3 py-1.5 text-[10px]">
-          <span class="text-fog-500">待处理</span>
-          <span class="ml-2 font-mono text-fog-100">{{ reviews.counts.open }}</span>
-          <span class="mx-2 text-fog-600">/</span>
-          <span class="text-rust-400">阻断 {{ reviews.counts.blocking }}</span>
-          <span class="ml-2 text-brass-300">警告 {{ reviews.counts.warning }}</span>
-          <span class="ml-2 text-lake-400">提示 {{ reviews.counts.info }}</span>
+          <span class="text-fog-500">{{ reviews.query.category === 'system' ? '系统故障' : '待处理内容问题' }}</span>
+          <span class="ml-2 font-mono text-fog-100">{{ reviews.query.category === 'system' ? reviews.counts.open : actionableOpenItems.length }}</span>
         </div>
         <NButton size="small" quaternary :loading="reviews.loading" @click="refresh()">
           刷新
@@ -202,6 +244,23 @@ onMounted(() => {
     </header>
 
     <div class="mt-4 flex flex-wrap items-center gap-2">
+      <NSelect
+        v-if="chapterOptions.length"
+        :value="chapterFilter ?? ''"
+        :options="[{ value: '', label: '全部章节' }, ...chapterOptions]"
+        filterable
+        clearable
+        size="small"
+        class="w-56"
+        @update:value="chapterFilter = $event || null"
+      />
+      <NSelect
+        :value="reviews.query.category ?? 'content'"
+        :options="[{ value: 'content', label: '内容异常' }, { value: 'system', label: '系统故障' }]"
+        size="small"
+        class="w-32"
+        @update:value="selectedIds = []; refresh({ category: $event })"
+      />
       <NSelect
         :value="reviews.query.status ?? 'open'"
         :options="REVIEW_STATUS_OPTIONS"
@@ -217,13 +276,14 @@ onMounted(() => {
         @update:value="refresh({ severity: $event || null })"
       />
       <NCheckbox
+        v-if="reviews.query.category !== 'system'"
         :checked="allSelected"
-        :disabled="!openItems.length"
+        :disabled="!actionableOpenItems.length"
         @update:checked="toggleAll"
       >
-        <span class="text-[11px] text-fog-400">全选待处理</span>
+        <span class="text-[11px] text-fog-400">全选待处理项</span>
       </NCheckbox>
-      <div class="ml-auto flex items-center gap-2">
+      <div v-if="reviews.query.category !== 'system'" class="ml-auto flex items-center gap-2">
         <span class="text-[10px] text-fog-500">已选 {{ selectedOpenIds.length }} 项</span>
         <NButton
           size="small"
@@ -242,6 +302,7 @@ onMounted(() => {
           批量忽略
         </NButton>
       </div>
+      <p v-else class="ml-auto text-[10px] text-fog-500">系统故障由后台任务自动记录；请到总览查看任务并重试。</p>
     </div>
 
     <NAlert v-if="reviews.error" type="error" :bordered="false" class="mt-4">
@@ -257,9 +318,9 @@ onMounted(() => {
       v-else-if="reviews.isEmpty"
       class="mt-5 flex min-h-[220px] flex-col items-center justify-center rounded-xl border border-dashed border-ink-700 bg-ink-900/30 px-6 text-center"
     >
-      <p class="font-display text-lg text-fog-200">这个范围内没有未处理的异常</p>
-      <p class="mt-2 text-[11px] text-fog-500">
-        生成、分场与选角过程中需要你判断的节点会集中出现在这里。
+      <p class="font-display text-lg text-fog-200">{{ reviews.query.category === 'system' ? '这个范围内没有系统故障' : '这个范围内没有待处理的内容异常' }}</p>
+      <p class="mt-2 text-[11px] leading-6 text-fog-500">
+        {{ reviews.query.category === 'system' ? '模型、任务和音频执行故障显示在总览的后台任务中，不会混入内容异常。' : 'AI 已自动采用的结果不会出现在这里；需要你判断的问题会附上原文或剧本位置、影响和处理建议。' }}
       </p>
     </div>
 
@@ -271,7 +332,7 @@ onMounted(() => {
       >
         <div class="flex items-start gap-3">
           <NCheckbox
-            v-if="item.status === 'open'"
+            v-if="item.status === 'open' && item.category === 'content' && item.actionable"
             :checked="selectedIds.includes(item.id)"
             class="mt-0.5"
             @update:checked="toggleOne(item, $event)"
@@ -282,7 +343,15 @@ onMounted(() => {
                 {{ REVIEW_SEVERITY_LABELS[item.severity] ?? item.severity }}
               </NTag>
               <NTag
-                v-if="item.status !== 'open'"
+                v-if="item.category === 'system'"
+                size="tiny"
+                :bordered="false"
+                type="error"
+              >
+                系统故障
+              </NTag>
+              <NTag
+                v-else-if="item.status !== 'open'"
                 size="tiny"
                 :bordered="false"
                 :type="statusTagType(item.status === 'resolved' ? 'approved' : 'info')"
@@ -296,6 +365,14 @@ onMounted(() => {
             <p v-if="item.message" class="mt-1.5 text-[11px] leading-5 text-fog-400">
               {{ item.message }}
             </p>
+            <div v-if="locationLabel(item) || item.location.quote" class="mt-2 rounded-lg border border-ink-700 bg-ink-900/50 px-3 py-2">
+              <p class="text-[10px] text-brass-300">{{ locationLabel(item) }}</p>
+              <p v-if="item.location.quote" class="mt-1 line-clamp-3 whitespace-pre-wrap border-l-2 border-brass-600/60 pl-2 text-[11px] leading-5 text-fog-300">{{ item.location.quote }}</p>
+            </div>
+            <div v-if="item.impact || item.recommended_action" class="mt-2 grid gap-2 text-[10px] leading-5 md:grid-cols-2">
+              <p v-if="item.impact" class="rounded bg-rust-500/[0.06] px-2 py-1.5 text-rust-300"><span class="text-fog-500">影响：</span>{{ item.impact }}</p>
+              <p v-if="item.recommended_action" class="rounded bg-brass-500/[0.06] px-2 py-1.5 text-brass-200"><span class="text-fog-500">推荐：</span>{{ item.recommended_action }}</p>
+            </div>
             <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-fog-500">
               <button
                 v-if="item.book_title && !bookId"
@@ -306,6 +383,9 @@ onMounted(() => {
                 {{ item.book_title }}
               </button>
               <span v-else-if="item.book_title">{{ item.book_title }}</span>
+              <span v-if="item.chapter_title" class="text-brass-300">
+                章节：{{ item.chapter_title }}
+              </span>
               <span :title="item.code">
                 {{ ENTITY_TYPE_LABELS[item.entity_type] ?? item.entity_type }}
                 <template v-if="item.entity_id"> · {{ item.entity_id.slice(-6).toUpperCase() }}</template>
@@ -316,11 +396,19 @@ onMounted(() => {
               </span>
             </div>
           </div>
-          <div v-if="item.status === 'open'" class="flex shrink-0 items-center gap-2">
-            <NButton size="tiny" type="primary" secondary :loading="actionLoading" @click="accept(item)">
-              接受
+          <div v-if="item.status === 'open'" class="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            <NButton
+              v-if="item.category === 'content' && item.action_type !== 'task' && (item.location.chapter_id || item.location.unit_id || item.location.character_id)"
+              size="tiny"
+              secondary
+              @click="emit('open-location', item)"
+            >
+              {{ actionLabel(item) }}
             </NButton>
-            <NButton size="tiny" quaternary @click="openIgnore([item.id])">忽略</NButton>
+            <template v-if="item.category === 'content' && item.actionable">
+              <NButton size="tiny" type="primary" secondary :loading="actionLoading" @click="accept(item)">接受</NButton>
+              <NButton size="tiny" quaternary @click="openIgnore([item.id])">忽略</NButton>
+            </template>
           </div>
         </div>
       </article>

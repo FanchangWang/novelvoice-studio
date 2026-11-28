@@ -14,6 +14,7 @@ import {
 
 import type { VoiceActorOut } from '@/api/types'
 import ActorEditModal from '@/components/actors/ActorEditModal.vue'
+import GeneralVoicePresets from '@/components/production/GeneralVoicePresets.vue'
 import { useActorStore } from '@/stores/actors'
 import { useSystemStore } from '@/stores/system'
 import { AGE_LABELS, GENDER_LABELS, labelOf } from '@/utils/analysis'
@@ -29,6 +30,7 @@ const message = useMessage()
 const search = ref('')
 const favoritesOnly = ref(false)
 const statusFilter = ref('')
+const scopeFilter = ref<'all' | 'general' | 'book'>('all')
 const showEditor = ref(false)
 const editingActor = ref<VoiceActorOut | null>(null)
 
@@ -49,6 +51,8 @@ function currentFilters() {
     q: search.value.trim(),
     favorite: favoritesOnly.value ? true : undefined,
     status: statusFilter.value || undefined,
+    scope: scopeFilter.value === 'all' ? undefined : scopeFilter.value,
+    bookId: undefined,
     limit: actors.query.limit ?? 100,
     offset: 0,
   }
@@ -164,8 +168,8 @@ onBeforeUnmount(() => {
             </NTag>
           </div>
           <p class="mt-2 max-w-2xl text-[12px] leading-6 text-fog-400">
-            配音员属于整个应用，不绑定单本书。每本书的旁白与角色从同一个声音库中挑选，
-            这样同一角色可以跨章节保持声音一致。
+            通用配音员供所有书籍复用；书籍专属配音员只用于来源书籍。选角时优先使用通用声线，
+            特殊角色没有适配项时才生成专属声音。
           </p>
         </div>
         <div class="flex items-center gap-2">
@@ -186,6 +190,17 @@ onBeforeUnmount(() => {
         <NSelect
           v-model:value="statusFilter"
           :options="statusOptions"
+          class="w-36"
+          size="small"
+          @update:value="reload"
+        />
+        <NSelect
+          v-model:value="scopeFilter"
+          :options="[
+            { label: '全部范围', value: 'all' },
+            { label: '通用配音员', value: 'general' },
+            { label: '书籍专属', value: 'book' },
+          ]"
           class="w-36"
           size="small"
           @update:value="reload"
@@ -213,6 +228,8 @@ onBeforeUnmount(() => {
         <NAlert v-if="actors.error" type="error" :bordered="false" class="mb-4">
           {{ actors.error }}
         </NAlert>
+
+        <GeneralVoicePresets class="mb-5" />
 
         <div v-if="actors.loading && !hasActors" class="grid gap-4 sm:grid-cols-2">
           <div
@@ -262,6 +279,9 @@ onBeforeUnmount(() => {
                   <h3 class="truncate font-display text-base text-fog-100">
                     {{ actor.display_name }}
                   </h3>
+                  <NTag size="tiny" :bordered="false" :type="actor.scope === 'book' ? 'warning' : 'info'">
+                    {{ actor.scope === 'book' ? '书籍专属' : '通用' }}
+                  </NTag>
                   <NTag v-if="actor.is_favorite" size="tiny" :bordered="false" type="success">
                     收藏
                   </NTag>

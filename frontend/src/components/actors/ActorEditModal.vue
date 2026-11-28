@@ -16,7 +16,7 @@ import { errorMessage } from '@/utils/errors'
 
 const show = defineModel<boolean>('show', { required: true })
 
-const props = defineProps<{ actor?: VoiceActorOut | null }>()
+const props = defineProps<{ actor?: VoiceActorOut | null; sourceBookId?: string | null }>()
 
 const emit = defineEmits<{
   (event: 'saved', actor: VoiceActorOut): void
@@ -37,6 +37,7 @@ const favorite = ref(false)
 const error = ref<string | null>(null)
 
 const isEdit = computed(() => Boolean(props.actor))
+const isBookScoped = computed(() => Boolean(props.sourceBookId) && !isEdit.value)
 const saving = computed(() => actors.creating || actors.saving)
 
 const genderOptions = [
@@ -121,6 +122,7 @@ async function submit(): Promise<void> {
       personality_tags: splitTags(personalityTags.value),
       reference_text: referenceText.value.trim() || null,
       is_favorite: favorite.value,
+      source_book_id: isBookScoped.value ? props.sourceBookId : null,
     }
     const created = await actors.create(payload)
     emit('saved', created)
@@ -142,7 +144,7 @@ watch(show, (visible) => {
   <NModal
     v-model:show="show"
     preset="card"
-    :title="isEdit ? '编辑配音员' : '新建配音员'"
+    :title="isEdit ? '编辑配音员' : isBookScoped ? '新建本书专属配音员' : '新建通用配音员'"
     :bordered="false"
     :style="{ width: '640px', maxWidth: 'calc(100vw - 32px)' }"
   >
@@ -152,6 +154,7 @@ watch(show, (visible) => {
       <NAlert v-if="!isEdit" type="info" :bordered="false">
         <p class="text-[11px] leading-5">
           保存时会调用本机声音设计服务生成参考音。模拟模式下返回测试音；真实模式首次加载模型可能需要等待。
+          {{ isBookScoped ? '这是书籍专属配音员，仅能分配给当前书。' : '这是通用配音员，可供所有书籍使用。' }}
         </p>
       </NAlert>
       <NAlert v-else type="warning" :bordered="false">

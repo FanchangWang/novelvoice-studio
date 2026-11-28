@@ -11,6 +11,8 @@ export interface ReviewQuery {
   severity?: string | null
   code?: string | null
   entityType?: string | null
+  chapterId?: string | null
+  category?: 'content' | 'system' | 'all'
   limit?: number
   offset?: number
 }
@@ -31,7 +33,12 @@ export const useReviewStore = defineStore('reviews', () => {
   const loading = ref(false)
   const resolving = ref(false)
   const error = ref<string | null>(null)
-  const query = ref<ReviewQuery>({ status: 'open', limit: 100, offset: 0 })
+  const query = ref<ReviewQuery>({
+    status: 'open',
+    category: 'content',
+    limit: 100,
+    offset: 0,
+  })
 
   let loadToken = 0
 
@@ -51,6 +58,8 @@ export const useReviewStore = defineStore('reviews', () => {
         severity: next.severity ? next.severity : null,
         code: next.code ?? null,
         entityType: next.entityType ?? null,
+        chapterId: next.chapterId ?? null,
+        category: next.category ?? 'content',
         limit: next.limit ?? 100,
         offset: next.offset ?? 0,
       })
@@ -128,7 +137,12 @@ export const useReviewStore = defineStore('reviews', () => {
     loading.value = false
     resolving.value = false
     error.value = null
-    query.value = { status: 'open', limit: 100, offset: 0 }
+    query.value = {
+      status: 'open',
+      category: 'content',
+      limit: 100,
+      offset: 0,
+    }
   }
 
   return {

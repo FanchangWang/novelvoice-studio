@@ -49,6 +49,7 @@ class VoiceActorOut(BaseModel):
     duration_ms: int | None = None
     status: str
     source: str
+    scope: str = "general"
     source_book_id: str | None = None
     is_favorite: bool
     is_mock: bool = False
@@ -63,6 +64,26 @@ class VoiceActorListResponse(BaseModel):
     total: int = 0
     limit: int = 50
     offset: int = 0
+
+
+class GeneralVoicePresetOut(BaseModel):
+    preset_id: str
+    display_name: str
+    description: str
+    gender_presentation: str
+    age_impression: str
+    language: str
+    timbre_tags: list[str] = Field(default_factory=list)
+    personality_tags: list[str] = Field(default_factory=list)
+    seed: int
+    actor_id: str | None = None
+    actor_status: str | None = None
+
+
+class GeneralVoicePresetListOut(BaseModel):
+    items: list[GeneralVoicePresetOut] = Field(default_factory=list)
+    ready_count: int = 0
+    total: int = 0
 
 
 class VoiceActorCreateRequest(BaseModel):
@@ -140,6 +161,8 @@ class CastActorOut(BaseModel):
     personality_tags: list[str] = Field(default_factory=list)
     is_favorite: bool = False
     is_mock: bool = False
+    scope: str = "general"
+    source_book_id: str | None = None
     audio_url: str | None = None
 
 

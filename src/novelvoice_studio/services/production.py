@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from novelvoice_studio.core.errors import NotFoundError, ValidationError
@@ -34,6 +34,16 @@ from novelvoice_studio.schemas.production import (
 )
 from novelvoice_studio.services.analysis_serializers import to_job_out
 from novelvoice_studio.services.paths import validate_id
+from novelvoice_studio.services.review_policy import AUTO_ACCEPTED_CODES, policy_for
+from novelvoice_studio.services.production_status import (
+    effective_entity_status,
+    effective_stage_status,
+    effective_unit_status,
+    effective_version_status,
+    entity_has_open_blocking,
+    has_open_blocking,
+    stage_review_scope,
+)
 from novelvoice_studio.services.unit_audio import refresh_stale_units
 
 ACTIVE_JOB_STATUSES = ("pending", "running")
@@ -45,8 +55,28 @@ _JOB_STATUS_MAP = {
     "chapter_scene": "scripting",
     "chapter_scenes": "scripting",
     "chapter_script": "scripting",
+    "production_batch": "scripting",
     "book_casting": "casting",
 }
+
+
+def item_chapter_for_review(
+    item: ReviewItem,
+    scene_chapter_map: dict[str, str],
+    unit_chapter_map: dict[str, str],
+    version_chapter_map: dict[str, str],
+) -> str | None:
+    if item.entity_type == "chapter":
+        return item.entity_id
+    if item.entity_type == "scene" and item.entity_id:
+        return scene_chapter_map.get(item.entity_id)
+    if item.entity_type == "script_unit" and item.entity_id:
+        return unit_chapter_map.get(item.entity_id)
+    if item.entity_type == "script_version" and item.entity_id:
+        return version_chapter_map.get(item.entity_id)
+    payload = item.payload_json or {}
+    candidate = payload.get("chapter_id")
+    return candidate if isinstance(candidate, str) else None
 
 
 class ProductionService:
@@ -65,6 +95,7 @@ class ProductionService:
             )
         )
         chapter_ids = {item.id for item in chapters}
+        included_chapter_count = sum(1 for item in chapters if item.analysis_included)
 
         bible = self.session.scalar(
             select(BookBible)
@@ -95,25 +126,17 @@ class ProductionService:
             )
 
         scene_rows = self.session.execute(
-            select(
-                Scene.chapter_id,
-                Scene.analysis_version,
-                func.count(Scene.id),
+            select(Scene.id, Scene.chapter_id, Scene.analysis_version).where(
+                Scene.book_id == book.id
             )
-            .where(Scene.book_id == book.id)
-            .group_by(Scene.chapter_id, Scene.analysis_version)
         ).all()
         scene_counts: dict[str, int] = {}
         scene_chapter_map: dict[str, str] = {}
         chapter_by_id = {item.id: item for item in chapters}
-        for chapter_id, version, count in scene_rows:
+        for scene_id, chapter_id, version in scene_rows:
             chapter = chapter_by_id.get(chapter_id)
             if chapter is not None and chapter.scene_version == version:
-                scene_counts[chapter_id] = int(count)
-        if chapter_ids:
-            for scene_id, chapter_id in self.session.execute(
-                select(Scene.id, Scene.chapter_id).where(Scene.book_id == book.id)
-            ).all():
+                scene_counts[chapter_id] = scene_counts.get(chapter_id, 0) + 1
                 scene_chapter_map[scene_id] = chapter_id
 
         versions = list(
@@ -125,6 +148,7 @@ class ProductionService:
             )
         )
         version_by_chapter = {item.chapter_id: item for item in versions}
+        unit_chapter_map: dict[str, str] = {}
         unit_counts: dict[str, dict[str, int]] = {}
         if versions:
             active_units = list(
@@ -138,6 +162,9 @@ class ProductionService:
             )
             if refresh_stale_units(self.session, active_units):
                 self.session.commit()
+            unit_chapter_map = {
+                unit.id: unit.chapter_id for unit in active_units
+            }
             rows = self.session.execute(
                 select(
                     ScriptUnit.script_version_id,
@@ -177,19 +204,48 @@ class ProductionService:
                 elif unit_type in CUE_UNIT_TYPES:
                     bucket["cue"] += int(count)
 
-        open_reviews = list(
-            self.session.scalars(
+        open_reviews = [
+            item
+            for item in self.session.scalars(
                 select(ReviewItem).where(
                     ReviewItem.book_id == book.id,
                     ReviewItem.status == "open",
                 )
             )
-        )
+            if policy_for(item.code, category=item.category).actionable
+        ]
         review_by_chapter = self._reviews_by_chapter(
-            open_reviews, chapter_ids, scene_chapter_map,
+            open_reviews,
+            chapter_ids,
+            scene_chapter_map,
+            unit_chapter_map,
             {item.id: item.chapter_id for item in versions},
         )
         severity_counts = Counter(item.severity for item in open_reviews)
+        blocking_by_stage = self._blocking_by_stage(
+            open_reviews,
+            chapter_ids,
+            scene_chapter_map,
+            unit_chapter_map,
+            {item.id: item.chapter_id for item in versions},
+        )
+        blocking_workflow_count = sum(
+            1
+            for item in open_reviews
+            if item.severity == "blocking"
+            and (
+                not item.code.startswith(("scene_", "script_"))
+                or item_chapter_for_review(
+                    item,
+                    scene_chapter_map,
+                    unit_chapter_map,
+                    {version.id: version.chapter_id for version in versions},
+                )
+                in blocking_by_stage[
+                    "scene" if item.code.startswith("scene_") else "script"
+                ]
+            )
+        )
 
         cast_count = int(
             self.session.scalar(
@@ -238,11 +294,21 @@ class ProductionService:
                     id=chapter.id,
                     title=chapter.title,
                     sequence=chapter.sequence,
+                    volume_number=chapter.volume_number,
+                    volume_title=chapter.volume_title,
+                    chapter_kind=chapter.chapter_kind,
+                    analysis_included=chapter.analysis_included,
                     char_count=chapter.char_count,
-                    scene_status=chapter.scene_status,
+                    scene_status=effective_stage_status(
+                        chapter.scene_status,
+                        blocking=chapter.id in blocking_by_stage["scene"],
+                    ),
                     scene_version=chapter.scene_version,
                     scene_count=scene_count,
-                    script_status=chapter.script_status,
+                    script_status=effective_stage_status(
+                        chapter.script_status,
+                        blocking=chapter.id in blocking_by_stage["script"],
+                    ),
                     script_version=version.version if version is not None else 0,
                     unit_count=int(counts.get("total", 0)),
                     tts_unit_count=int(counts.get("tts", 0)),
@@ -260,9 +326,24 @@ class ProductionService:
                 GenerationJob.book_id == book.id,
                 GenerationJob.status.in_(ACTIVE_JOB_STATUSES),
             )
-            .order_by(GenerationJob.created_at.desc())
+            .order_by(
+                case((GenerationJob.job_type == "auto_production", 0), else_=1),
+                GenerationJob.created_at.desc(),
+            )
             .limit(1)
         )
+        display_job = active_job
+        if display_job is None:
+            # 自动制作结束后保留父任务，使四阶段结果、系统故障和重试入口不会消失。
+            display_job = self.session.scalar(
+                select(GenerationJob)
+                .where(
+                    GenerationJob.book_id == book.id,
+                    GenerationJob.job_type == "auto_production",
+                )
+                .order_by(GenerationJob.created_at.desc())
+                .limit(1)
+            )
         bible_ready = bool(
             bible is not None and bible.status in {"approved", "needs_review"}
         )
@@ -270,20 +351,27 @@ class ProductionService:
             book,
             active_job,
             bible_ready,
-            len(chapters),
+            included_chapter_count,
             chapters_with_scenes,
             chapters_with_scripts,
             cast_count,
-            severity_counts.get("blocking", 0),
+            blocking_workflow_count,
             severity_counts.get("warning", 0),
         )
+        if (
+            active_job is None
+            and display_job is not None
+            and display_job.job_type == "auto_production"
+            and display_job.status == "failed"
+        ):
+            derived = "failed"
         next_action = self._next_action(
             bible_ready=bible_ready,
-            chapter_count=len(chapters),
+            chapter_count=included_chapter_count,
             chapters_with_scenes=chapters_with_scenes,
             chapters_with_scripts=chapters_with_scripts,
             cast_count=cast_count,
-            blocking=severity_counts.get("blocking", 0),
+            blocking=blocking_workflow_count,
             warning=severity_counts.get("warning", 0),
             tts_total=tts_total,
             audio_ready=audio_ready,
@@ -299,7 +387,7 @@ class ProductionService:
             bible_summary=bible.summary if bible is not None else None,
             character_count=character_count,
             arc_count=arc_count,
-            chapter_count=len(chapters),
+            chapter_count=included_chapter_count,
             chapters_with_scenes=chapters_with_scenes,
             chapters_with_scripts=chapters_with_scripts,
             scene_count=scene_total,
@@ -315,7 +403,7 @@ class ProductionService:
             warning_reviews=severity_counts.get("warning", 0),
             info_reviews=severity_counts.get("info", 0),
             next_action=next_action,
-            job=to_job_out(active_job) if active_job is not None else None,
+            job=to_job_out(display_job) if display_job is not None else None,
             chapters=chapter_items,
         )
 
@@ -329,6 +417,8 @@ class ProductionService:
         severity: str | None = None,
         code: str | None = None,
         entity_type: str | None = None,
+        chapter_id: str | None = None,
+        category: str | None = "content",
         limit: int = 100,
         offset: int = 0,
     ) -> ReviewListResponse:
@@ -336,9 +426,29 @@ class ProductionService:
         offset = max(0, int(offset))
         if book_id is not None:
             self._book(book_id)
+        if chapter_id is not None:
+            validate_id(chapter_id, "ch")
+            chapter = self.session.get(Chapter, chapter_id)
+            if chapter is None:
+                raise NotFoundError("章节不存在")
+            if book_id is not None and chapter.book_id != book_id:
+                raise ValidationError("章节不属于当前书籍")
         conditions = []
+        count_conditions = []
+        if category not in {None, "content", "system", "all"}:
+            raise ValidationError("异常分类无效")
+        if category in {"content", "system"}:
+            conditions.append(ReviewItem.category == category)
+            count_conditions.append(ReviewItem.category == category)
+        if category == "content":
+            auto_condition = ReviewItem.code.in_(AUTO_ACCEPTED_CODES)
+            for prefix in ("bible_note:%", "scene_note:%", "script_note:%"):
+                auto_condition = auto_condition | ReviewItem.code.like(prefix)
+            conditions.append(~auto_condition)
+            count_conditions.append(~auto_condition)
         if book_id is not None:
             conditions.append(ReviewItem.book_id == book_id)
+            count_conditions.append(ReviewItem.book_id == book_id)
         if status is not None:
             if status not in {"open", "resolved", "ignored"}:
                 raise ValidationError("异常状态无效")
@@ -349,8 +459,40 @@ class ProductionService:
             conditions.append(ReviewItem.severity == severity)
         if code:
             conditions.append(ReviewItem.code == code)
+            count_conditions.append(ReviewItem.code == code)
         if entity_type:
             conditions.append(ReviewItem.entity_type == entity_type)
+            count_conditions.append(ReviewItem.entity_type == entity_type)
+        if chapter_id is not None:
+            chapter_condition = or_(
+                (ReviewItem.entity_type == "chapter")
+                & (ReviewItem.entity_id == chapter_id),
+                (ReviewItem.entity_type == "scene")
+                & (
+                    select(Scene.chapter_id)
+                    .where(Scene.id == ReviewItem.entity_id)
+                    .scalar_subquery()
+                    == chapter_id
+                ),
+                (ReviewItem.entity_type == "script_unit")
+                & (
+                    select(ScriptUnit.chapter_id)
+                    .where(ScriptUnit.id == ReviewItem.entity_id)
+                    .scalar_subquery()
+                    == chapter_id
+                ),
+                (ReviewItem.entity_type == "script_version")
+                & (
+                    select(ScriptVersion.chapter_id)
+                    .where(ScriptVersion.id == ReviewItem.entity_id)
+                    .scalar_subquery()
+                    == chapter_id
+                ),
+                func.json_extract(ReviewItem.payload_json, "$.chapter_id")
+                == chapter_id,
+            )
+            conditions.append(chapter_condition)
+            count_conditions.append(chapter_condition)
 
         severity_order = case(
             (ReviewItem.severity == "blocking", 0),
@@ -375,7 +517,7 @@ class ProductionService:
             )
             or 0
         )
-        counts = self._review_counts(book_id)
+        counts = self._review_counts(book_id, count_conditions)
         return ReviewListResponse(
             items=[
                 self._review_out(item, book_title)
@@ -407,6 +549,12 @@ class ProductionService:
         item.resolution_note = note or "已接受"
         item.resolved_at = now
         item.updated_at = now
+        self.session.flush()
+        chapter_id = self._review_chapter_id(item)
+        if chapter_id and item.code.startswith("scene_"):
+            self._refresh_stage_status(chapter_id, "scene")
+        elif chapter_id and item.code.startswith("script_"):
+            self._refresh_stage_status(chapter_id, "script")
         self.session.commit()
         return self._review_out(item, book_title), item.book_id, item.code
 
@@ -436,6 +584,8 @@ class ProductionService:
         touched: list[str] = []
         books: list[str] = []
         codes: list[str] = []
+        scene_chapters: set[str] = set()
+        script_chapters: set[str] = set()
         for row in rows:
             if row.status != "open":
                 skipped += 1
@@ -453,6 +603,16 @@ class ProductionService:
                 codes.append(row.code)
             if row.book_id not in books:
                 books.append(row.book_id)
+            chapter_id = self._review_chapter_id(row)
+            if chapter_id and row.code.startswith("scene_"):
+                scene_chapters.add(chapter_id)
+            elif chapter_id and row.code.startswith("script_"):
+                script_chapters.add(chapter_id)
+        self.session.flush()
+        for chapter_id in scene_chapters:
+            self._refresh_stage_status(chapter_id, "scene")
+        for chapter_id in script_chapters:
+            self._refresh_stage_status(chapter_id, "script")
         self.session.commit()
         return ReviewBatchResolveResponse(
             action=payload.action,
@@ -466,6 +626,101 @@ class ProductionService:
 
     # ---------------------------------------------------------------- helpers
 
+    def _review_chapter_id(self, item: ReviewItem) -> str | None:
+        if item.entity_type == "chapter":
+            return item.entity_id
+        if item.entity_type == "scene" and item.entity_id:
+            return self.session.scalar(
+                select(Scene.chapter_id).where(Scene.id == item.entity_id)
+            )
+        if item.entity_type == "script_unit" and item.entity_id:
+            return self.session.scalar(
+                select(ScriptUnit.chapter_id).where(ScriptUnit.id == item.entity_id)
+            )
+        if item.entity_type == "script_version" and item.entity_id:
+            return self.session.scalar(
+                select(ScriptVersion.chapter_id).where(
+                    ScriptVersion.id == item.entity_id
+                )
+            )
+        payload = item.payload_json or {}
+        candidate = payload.get("chapter_id")
+        return candidate if isinstance(candidate, str) else None
+
+    def _refresh_stage_status(self, chapter_id: str, stage: str) -> None:
+        chapter = self.session.get(Chapter, chapter_id)
+        if chapter is None:
+            return
+        version = None
+        if stage == "script":
+            version = self.session.scalar(
+                select(ScriptVersion)
+                .where(
+                    ScriptVersion.chapter_id == chapter.id,
+                    ScriptVersion.is_active.is_(True),
+                )
+                .order_by(ScriptVersion.version.desc())
+                .limit(1)
+            )
+        _, conditions = stage_review_scope(self.session, chapter, stage, version)
+        blocking = has_open_blocking(self.session, chapter.book_id, stage, conditions)
+        if stage == "scene":
+            chapter.scene_status = effective_stage_status(
+                chapter.scene_status,
+                blocking=blocking,
+            )
+            rows = list(
+                self.session.scalars(
+                    select(Scene).where(
+                        Scene.chapter_id == chapter.id,
+                        Scene.analysis_version == chapter.scene_version,
+                    )
+                )
+            )
+            for row in rows:
+                row.analysis_status = effective_entity_status(
+                    row.analysis_status,
+                    blocking=entity_has_open_blocking(
+                        self.session,
+                        row.book_id,
+                        "scene",
+                        "scene",
+                        row.id,
+                    ),
+                )
+                row.updated_at = utc_now()
+        else:
+            chapter.script_status = effective_stage_status(
+                chapter.script_status,
+                blocking=blocking,
+            )
+            if version is not None:
+                version.status = effective_version_status(
+                    version.status,
+                    blocking=blocking,
+                )
+                version.updated_at = utc_now()
+                units = list(
+                    self.session.scalars(
+                        select(ScriptUnit).where(
+                            ScriptUnit.script_version_id == version.id,
+                        )
+                    )
+                )
+                for unit in units:
+                    unit.review_status = effective_unit_status(
+                        unit.review_status,
+                        blocking=entity_has_open_blocking(
+                            self.session,
+                            unit.book_id,
+                            "script",
+                            "script_unit",
+                            unit.id,
+                        ),
+                    )
+                    unit.updated_at = utc_now()
+        chapter.updated_at = utc_now()
+
     def _book(self, book_id: str) -> Book:
         validate_id(book_id, "book")
         book = self.session.get(Book, book_id)
@@ -476,16 +731,31 @@ class ProductionService:
     def _review_out(
         self, item: ReviewItem, book_title: str | None = None
     ) -> ReviewItemOut:
+        chapter_id = self._review_chapter_id(item)
+        chapter_title = (
+            self.session.scalar(select(Chapter.title).where(Chapter.id == chapter_id))
+            if chapter_id
+            else None
+        )
+        policy = policy_for(item.code, category=item.category)
         return ReviewItemOut(
             id=item.id,
             book_id=item.book_id,
             book_title=book_title,
             entity_type=item.entity_type,
             entity_id=item.entity_id,
+            chapter_id=chapter_id,
+            chapter_title=chapter_title,
             code=item.code,
+            category=item.category or policy.category,
+            actionable=policy.actionable,
             severity=item.severity,
             title=item.title,
             message=item.message,
+            location=self._review_location(item, chapter_id),
+            impact=policy.impact,
+            recommended_action=policy.recommended_action,
+            action_type=policy.action_type,
             payload=item.payload_json or {},
             status=item.status,
             source=item.source,
@@ -494,6 +764,97 @@ class ProductionService:
             created_at=item.created_at,
             updated_at=item.updated_at,
         )
+
+    def _review_location(
+        self, item: ReviewItem, chapter_id: str | None
+    ) -> dict[str, object]:
+        """仅从已入库内容构造定位，不读取用户提供的任意路径。"""
+        payload = item.payload_json or {}
+        location: dict[str, object] = {"chapter_id": chapter_id}
+        unit: ScriptUnit | None = None
+        if item.entity_type == "script_unit" and item.entity_id:
+            unit = self.session.get(ScriptUnit, item.entity_id)
+        elif item.code == "script_unresolved_speaker" and chapter_id:
+            indexes = [
+                row.get("unit_index")
+                for row in payload.get("units", [])
+                if isinstance(row, dict) and isinstance(row.get("unit_index"), int)
+            ]
+            if indexes:
+                version = self.session.scalar(
+                    select(ScriptVersion)
+                    .where(
+                        ScriptVersion.chapter_id == chapter_id,
+                        ScriptVersion.is_active.is_(True),
+                    )
+                    .order_by(ScriptVersion.version.desc())
+                    .limit(1)
+                )
+                if version is not None:
+                    unit = self.session.scalar(
+                        select(ScriptUnit)
+                        .where(
+                            ScriptUnit.script_version_id == version.id,
+                            ScriptUnit.unit_index.in_(indexes),
+                            ScriptUnit.unit_type == "dialogue",
+                            ScriptUnit.speaker_type != "character",
+                        )
+                        .order_by(ScriptUnit.unit_index)
+                        .limit(1)
+                    )
+        if unit is not None:
+            location.update(
+                unit_id=unit.id,
+                unit_index=unit.unit_index,
+                quote=unit.source_text,
+                source_start_offset=unit.source_start_offset,
+                source_end_offset=unit.source_end_offset,
+            )
+            return location
+        if item.entity_type == "scene" and item.entity_id:
+            scene = self.session.get(Scene, item.entity_id)
+            if scene is not None:
+                evidence = scene.evidence_json or []
+                quote = next(
+                    (
+                        row.get("quote")
+                        for row in evidence
+                        if isinstance(row, dict) and row.get("quote")
+                    ),
+                    "",
+                )
+                location.update(
+                    scene_id=scene.id,
+                    scene_index=scene.scene_index,
+                    quote=quote,
+                    source_start_offset=scene.source_start_offset,
+                    source_end_offset=scene.source_end_offset,
+                )
+                return location
+        if item.entity_type == "character" and item.entity_id:
+            character = self.session.get(Character, item.entity_id)
+            if character is not None:
+                evidence = next(
+                    (
+                        row
+                        for row in character.evidence_json
+                        if isinstance(row, dict) and row.get("chapter_id")
+                    ),
+                    {},
+                )
+                evidence_chapter = evidence.get("chapter_id")
+                if isinstance(evidence_chapter, str):
+                    location["chapter_id"] = evidence_chapter
+                location.update(
+                    character_id=character.id,
+                    character_name=character.canonical_name,
+                    quote=evidence.get("quote", ""),
+                )
+                return location
+        quote = payload.get("quote")
+        if isinstance(quote, str) and quote:
+            location["quote"] = quote
+        return location
 
     def _derived_status(
         self,
@@ -508,6 +869,14 @@ class ProductionService:
         warning: int,
     ) -> str:
         if job is not None:
+            if job.job_type == "auto_production":
+                stage = (job.result_json or {}).get("stage")
+                return {
+                    "bible": "analyzing",
+                    "casting": "casting",
+                    "script": "scripting",
+                    "audio": "generating",
+                }.get(stage, "analyzing")
             return _JOB_STATUS_MAP.get(job.job_type, "analyzing")
         if chapter_count == 0:
             return "not_started"
@@ -524,7 +893,7 @@ class ProductionService:
             return "scripting"
         if cast_count == 0:
             return "casting"
-        if blocking or warning:
+        if blocking:
             return "needs_review"
         if book.production_status in {"ready", "needs_review", "failed"}:
             return book.production_status
@@ -553,7 +922,7 @@ class ProductionService:
             return "script"
         if cast_count == 0:
             return "casting"
-        if blocking or warning:
+        if blocking:
             return "reviews"
         if tts_total == 0:
             return "script"
@@ -566,28 +935,56 @@ class ProductionService:
         reviews: list[ReviewItem],
         chapter_ids: set[str],
         scene_chapter_map: dict[str, str],
+        unit_chapter_map: dict[str, str],
         version_chapter_map: dict[str, str],
     ) -> dict[str, int]:
         counts: dict[str, int] = {}
         for item in reviews:
-            chapter_id: str | None = None
-            payload = item.payload_json or {}
-            candidate = payload.get("chapter_id")
-            if isinstance(candidate, str) and candidate in chapter_ids:
-                chapter_id = candidate
-            elif item.entity_type == "chapter" and item.entity_id in chapter_ids:
-                chapter_id = item.entity_id
-            elif item.entity_type == "scene" and item.entity_id:
-                chapter_id = scene_chapter_map.get(item.entity_id)
-            elif item.entity_type == "script_version" and item.entity_id:
-                chapter_id = version_chapter_map.get(item.entity_id)
-            if chapter_id:
+            chapter_id = item_chapter_for_review(
+                item,
+                scene_chapter_map,
+                unit_chapter_map,
+                version_chapter_map,
+            )
+            if chapter_id in chapter_ids:
                 counts[chapter_id] = counts.get(chapter_id, 0) + 1
         return counts
 
-    def _review_counts(self, book_id: str | None) -> ReviewCountsOut:
-        conditions = []
-        if book_id is not None:
+    @staticmethod
+    def _blocking_by_stage(
+        reviews: list[ReviewItem],
+        chapter_ids: set[str],
+        scene_chapter_map: dict[str, str],
+        unit_chapter_map: dict[str, str],
+        version_chapter_map: dict[str, str],
+    ) -> dict[str, set[str]]:
+        result: dict[str, set[str]] = {"scene": set(), "script": set()}
+        for item in reviews:
+            if item.severity != "blocking":
+                continue
+            if item.code.startswith("scene_"):
+                stage = "scene"
+            elif item.code.startswith("script_"):
+                stage = "script"
+            else:
+                continue
+            chapter_id = item_chapter_for_review(
+                item,
+                scene_chapter_map,
+                unit_chapter_map,
+                version_chapter_map,
+            )
+            if chapter_id in chapter_ids:
+                result[stage].add(chapter_id)
+        return result
+
+    def _review_counts(
+        self,
+        book_id: str | None,
+        extra_conditions: list | None = None,
+    ) -> ReviewCountsOut:
+        conditions = list(extra_conditions or [])
+        if book_id is not None and not conditions:
             conditions.append(ReviewItem.book_id == book_id)
         rows = self.session.execute(
             select(

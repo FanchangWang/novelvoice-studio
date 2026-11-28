@@ -252,6 +252,11 @@ class AnalysisService:
         chapter = session.get(Chapter, chapter_id)
         if chapter is None:
             raise NotFoundError("章节不存在")
+        if not chapter.analysis_included:
+            raise ValidationError(
+                "该章节当前未纳入分析；如确需纳入，请先在章节设置中开启。",
+                code="chapter_excluded",
+            )
         book = session.get(Book, chapter.book_id)
         if book is None or book.deleted_at is not None:
             raise NotFoundError("章节所属书籍不存在或已在回收站")
@@ -281,6 +286,7 @@ class AnalysisService:
             select(Chapter.summary)
             .where(
                 Chapter.book_id == book.id,
+                Chapter.analysis_included.is_(True),
                 Chapter.sequence < chapter.sequence,
                 Chapter.summary.is_not(None),
                 Chapter.analysis_status.in_(FINISHED_CHAPTER_STATUSES),
@@ -1035,6 +1041,10 @@ class AnalysisService:
             id=chapter.id,
             title=chapter.title,
             sequence=chapter.sequence,
+            volume_number=chapter.volume_number,
+            volume_title=chapter.volume_title,
+            chapter_kind=chapter.chapter_kind,
+            analysis_included=chapter.analysis_included,
             analysis_status=chapter.analysis_status,
             has_summary=bool(chapter.summary),
             summary=chapter.summary,
@@ -1200,6 +1210,11 @@ class AnalysisService:
             chapter = session.get(Chapter, chapter_id)
             if chapter is None:
                 raise NotFoundError("章节不存在")
+            if not chapter.analysis_included:
+                raise ValidationError(
+                    "该章节当前未纳入分析；如确需纳入，请先在章节设置中开启。",
+                    code="chapter_excluded",
+                )
             self._book(session, chapter.book_id)
             if self._active_job(session, chapter.book_id):
                 raise ConflictError(
@@ -1225,12 +1240,15 @@ class AnalysisService:
             chapters = list(
                 session.scalars(
                     select(Chapter)
-                    .where(Chapter.book_id == book.id)
+                    .where(
+                        Chapter.book_id == book.id,
+                        Chapter.analysis_included.is_(True),
+                    )
                     .order_by(Chapter.sequence.asc())
                 )
             )
             if not chapters:
-                raise ValidationError("书籍没有章节，无法分析", code="book_has_no_chapters")
+                raise ValidationError("书籍没有可分析的章节", code="book_has_no_chapters")
             if requested:
                 by_id = {item.id: item for item in chapters}
                 missing = [item for item in requested if item not in by_id]

@@ -2,7 +2,7 @@
 
 export * from './v05-types'
 
-export type DuplicatePolicy = 'new' | 'reject' | 'replace'
+export type DuplicatePolicy = 'new' | 'reject' | 'replace' | 'merge'
 
 export interface BookSummary {
   id: string
@@ -16,6 +16,7 @@ export interface BookSummary {
   chapter_count: number
   created_at: string
   updated_at: string
+  deleted_at?: string | null
 }
 
 export interface BookDetail extends BookSummary {
@@ -38,6 +39,17 @@ export interface EncodingCandidate {
   reason: string
 }
 
+export interface BookMetadataOut {
+  title: string | null
+  author: string | null
+  description: string | null
+  title_source: string
+  author_source: string | null
+  description_source: string | null
+  confidence: number
+  warnings: string[]
+}
+
 export interface ImportPreview {
   filename: string
   size_bytes: number
@@ -53,16 +65,25 @@ export interface ImportPreview {
   chapter_count: number
   chapter_titles: string[]
   chapters_truncated: boolean
+  structure_source: 'rules' | 'ai' | 'custom'
+  ai_assisted: boolean
   warnings: string[]
   duplicate: DuplicateBookInfo | null
+  metadata: BookMetadataOut
 }
 
 export interface ImportResult {
   book: BookDetail
   chapters_created: number
+  chapters_updated: number
+  chapters_unchanged: number
+  chapters_changed: number
   encoding: string
   warnings: string[]
   replaced: boolean
+  mode: 'new' | 'replace' | 'merge'
+  structure_source: 'rules' | 'ai' | 'custom'
+  ai_assisted: boolean
 }
 
 export interface BookListResponse {
@@ -86,6 +107,11 @@ export interface ChapterSummary {
   source_start_offset: number
   source_end_offset: number
   analysis_status: string
+  volume_number: number
+  volume_title: string
+  chapter_kind: 'story' | 'extra' | 'author_note' | 'unclassified'
+  classification_status: 'ai_suggested' | 'confirmed' | 'unclassified'
+  analysis_included: boolean
   created_at: string
   updated_at: string
 }
@@ -98,12 +124,21 @@ export interface ChapterDetail extends ChapterSummary {
 export interface ChapterListResponse {
   items: ChapterSummary[]
   total: number
+  page: number
+  page_size: number
 }
 
 export interface ChapterMutationResponse {
   chapter: ChapterSummary
   affected_chapter_ids: string[]
   items: ChapterSummary[]
+}
+
+export interface ChapterUpdatePayload {
+  title?: string
+  chapter_kind?: 'story' | 'extra' | 'author_note' | 'unclassified'
+  classification_status?: 'ai_suggested' | 'confirmed' | 'unclassified'
+  analysis_included?: boolean
 }
 
 export interface ComponentStatus {
@@ -401,6 +436,10 @@ export interface AnalysisChapterStatus {
   id: string
   title: string
   sequence: number
+  volume_number: number
+  volume_title: string
+  chapter_kind: 'story' | 'extra' | 'author_note' | 'unclassified'
+  analysis_included: boolean
   analysis_status: string
   has_summary: boolean
   summary: string | null

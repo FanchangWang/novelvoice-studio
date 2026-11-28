@@ -45,6 +45,14 @@ class VoiceActor(Base):
         CheckConstraint(f"age_impression IN {_AGE}", name="ck_voice_actors_age"),
         CheckConstraint(f"status IN {_STATUS}", name="ck_voice_actors_status"),
         CheckConstraint(f"source IN {_SOURCE_SQL}", name="ck_voice_actors_source"),
+        CheckConstraint(
+            "scope IN ('general','book')", name="ck_voice_actors_scope"
+        ),
+        CheckConstraint(
+            "(scope = 'general' AND source_book_id IS NULL) "
+            "OR (scope = 'book' AND source_book_id IS NOT NULL)",
+            name="ck_voice_actors_scope_owner",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -68,6 +76,7 @@ class VoiceActor(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(16), default="draft", nullable=False)
     source: Mapped[str] = mapped_column(String(16), default="ai", nullable=False)
+    scope: Mapped[str] = mapped_column(String(16), default="general", nullable=False)
     source_book_id: Mapped[str | None] = mapped_column(
         String(32), ForeignKey("books.id", ondelete="SET NULL")
     )
